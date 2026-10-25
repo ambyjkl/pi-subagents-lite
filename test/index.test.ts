@@ -132,6 +132,7 @@ vi.mock("../src/ui/renderer.js", () => ({
   renderAgentToolCall: vi.fn(() => "mocked-call"),
   renderAgentToolResult: mockRenderAgentToolResult,
   renderStatusLine: vi.fn(),
+  renderSubagentMessage: vi.fn(),
   renderSubagentResult: vi.fn(
     () =>
       new (class {
@@ -292,8 +293,8 @@ describe("message renderer registration", () => {
     mutableStore.agent.showCompletionCards = true;
   });
 
-  it("registers the subagent-result renderer", () => {
-    expect(api.messageRenderers.map((r) => r.customType)).toContain("subagent-result");
+  it("registers renderers for agent messages and results", () => {
+    expect(api.messageRenderers.map((r) => r.customType)).toEqual(["subagent-message", "subagent-result"]);
   });
 
   it("uses the persisted setting regardless of renderer expanded state", () => {
@@ -434,29 +435,32 @@ describe("subagent spawn guard", () => {
     expect(api.listeners.some((l) => l.event === "session_shutdown")).toBe(true);
   });
 
-  it("stays inert when loaded inside a subagent spawn", async () => {
+  it("registers only communication tools when loaded inside a subagent spawn", async () => {
     spawnGuard.depth++;
     try {
       const api = createMockExtensionAPI();
       await loadExtension(api.api);
 
-      // No tools, no event handlers: the subagent must not clobber the parent shell
-      // (setPiInstance/setSessionCtx happen via the factory + session_start handler).
-      expect(api.tools).toHaveLength(0);
-      expect(api.listeners).toHaveLength(0);
+      expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
+      expect(findTool(api, "MessageAgent")!.parameters.required).toEqual(["message"]);
+      expect(findTool(api, "MessageAgent")!.constrainedSampling).toBeUndefined();
+      // No parent lifecycle handlers; only the tool-aware prompt guidance hook.
+      expect(api.listeners.map((l) => l.event)).toEqual(["before_agent_start"]);
+      expect(api.commands).toHaveLength(0);
+      expect(api.messageRenderers).toHaveLength(0);
     } finally {
       spawnGuard.depth--;
     }
     expect(spawnGuard.depth).toBe(0);
   });
 
-  it("is inert for nested spawns and recovers when depth returns to 0", async () => {
+  it("registers communication tools for nested spawns and recovers when depth returns to 0", async () => {
     spawnGuard.depth++;
     spawnGuard.depth++; // nested
     try {
       const api = createMockExtensionAPI();
       await loadExtension(api.api);
-      expect(api.tools).toHaveLength(0);
+      expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
     } finally {
       spawnGuard.depth--;
       spawnGuard.depth--;

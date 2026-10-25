@@ -776,7 +776,7 @@ function flushWarnings(ctx: ExtensionContext, warnings: string[]): void {
  * The full child-session setup, prompt-free: settings, tool resolution, the
  * resource loader with pi's built-in factories, session creation, extension
  * binding, and tool visibility. Brackets itself with enterSubagentSpawn so
- * bindExtensions keeps the parent-owned subagents extension inert even when
+ * bindExtensions keeps the subagents extension from replacing the parent shell even when
  * called outside runAgent (nesting under its bracket is fine). The contract
  * suite drives this directly against the real SDK; runAgentImpl adds only the
  * prompt and warning flush. Returns the buffered warnings (flush after the

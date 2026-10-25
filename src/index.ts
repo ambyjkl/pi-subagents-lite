@@ -9,14 +9,17 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { setPiInstance, isInsideSubagentSpawn } from "./shell.ts";
-import { registerTools } from "./registration.ts";
+import { setPiInstance, isInsideSubagentSpawn, getPiInstance, getSessionCtx } from "./shell.ts";
+import { registerTools, registerCommunicationTools } from "./registration.ts";
 import { setupEventListeners } from "./events.ts";
 
 export default function (pi: ExtensionAPI) {
-  // Subagents re-load this extension under their own pi/runtime. Stay inert
-  // so we never clobber the parent-owned shell (the completion nudge relies on it).
-  if (isInsideSubagentSpawn()) return;
+  // Child runtimes get communication tools only. Capture the spawning parent,
+  // never replace its shell or install parent lifecycle handlers in the child.
+  if (isInsideSubagentSpawn()) {
+    registerCommunicationTools(pi, { pi: getPiInstance(), ctx: getSessionCtx() });
+    return;
+  }
   setPiInstance(pi);
   registerTools(pi);
   setupEventListeners(pi);

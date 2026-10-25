@@ -1,17 +1,20 @@
 import { Type, type TSchema } from "typebox";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatAgentTypeDescriptions, getVisibleAgentInfos } from "./agents/agent-types.ts";
 import { executeAgentTool, executeMessageAgentTool, executeStopAgentTool } from "./agents/tool-execution.ts";
 import { executeAgentStatusTool } from "./agents/agent-status.ts";
+import { sendParentMessage, type SubagentMessageDetails } from "./agents/parent-message.ts";
 import {
   renderAgentToolCall,
   renderAgentToolResult,
   renderStatusLine,
   renderSubagentResult,
+  renderSubagentMessage,
   registerAgentInvalidation,
 } from "./ui/renderer.ts";
 import { showAgentsMainMenu } from "./ui/menu/menus.ts";
 import { getStore } from "./shell.ts";
+import { COMMUNICATION_GUIDANCE } from "./prompt/prompts.ts";
 
 // Provider-side json_schema enforcement; "prefer" falls back gracefully on
 // providers without strict mode (e.g. local Ollama).
@@ -128,25 +131,70 @@ export function registerTools(pi: ExtensionAPI): void {
   };
   pi.registerTool(stopAgentTool);
 
+  registerCommunicationTools(pi);
+  registerCommandsAndMessages(pi);
+}
+
+interface ParentAgent {
+  pi: ExtensionAPI;
+  ctx: ExtensionContext;
+}
+
+/** Register just the shared communication tools without touching the parent shell. */
+export function registerCommunicationTools(pi: ExtensionAPI, parent?: ParentAgent): void {
+  const executeMessage: typeof executeMessageAgentTool = (toolCallId, params, signal, onUpdate, ctx) => {
+    if (parent && params.agent_id == null) {
+      return sendParentMessage(parent.pi, parent.ctx, ctx, params.message);
+    }
+    return executeMessageAgentTool(toolCallId, params, signal, onUpdate, ctx);
+  };
+
   const messageAgentTool = {
     name: "MessageAgent",
     label: "MessageAgent",
     description: ".",
-    parameters: Type.Object({ agent_id: Type.String(), message: Type.String() }, { additionalProperties: false }),
-    execute: executeMessageAgentTool,
-    constrainedSampling: CONSTRAINED_SAMPLING,
+    parameters: Type.Object(
+      {
+        agent_id: parent ? Type.Optional(Type.Union([Type.String(), Type.Null()])) : Type.String(),
+        message: Type.String(),
+      },
+      { additionalProperties: false },
+    ),
+    execute: executeMessage,
+    // The child schema permits omission; strict JSON schema requires all keys.
+    ...(!parent ? { constrainedSampling: CONSTRAINED_SAMPLING } : {}),
     renderResult: renderStatusLine,
   };
   pi.registerTool(messageAgentTool);
 
+  // Only subagents (parent set) get delivery guidance, and only while the tool is
+  // actually active after tool selection.
+  if (parent) {
+    pi.on("before_agent_start", (event) => {
+      if (!pi.getActiveTools().includes(messageAgentTool.name)) return;
+      const options = event.systemPromptOptions;
+      options.appendSystemPrompt = [options.appendSystemPrompt, COMMUNICATION_GUIDANCE].filter(Boolean).join("\n\n");
+    });
+  }
+
+  const executeStatus: typeof executeAgentStatusTool = (toolCallId, params, signal, onUpdate, ctx) => {
+    return executeAgentStatusTool(toolCallId, params, signal, onUpdate, ctx, !parent);
+  };
   const agentStatusTool = {
     name: "AgentStatus",
     label: "AgentStatus",
     description: ".",
     parameters: Type.Object({}, { additionalProperties: false }),
-    execute: executeAgentStatusTool,
+    execute: executeStatus,
   };
   pi.registerTool(agentStatusTool);
+}
+
+function registerCommandsAndMessages(pi: ExtensionAPI): void {
+  pi.registerMessageRenderer<SubagentMessageDetails>("subagent-message", (message, _options, theme) => {
+    const store = getStore();
+    return renderSubagentMessage(message, theme, store.agent.modelDisplayStyle, store.agent.showCost);
+  });
 
   // Message renderer — subagent-result (background agent completion)
   pi.registerMessageRenderer("subagent-result", (message, options, theme) => {

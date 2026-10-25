@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Subagents can use `MessageAgent` and `AgentStatus` when the extension and tool settings permit. A subagent omitting `agent_id` (or passing `null`) messages its parent, steering a busy parent or waking an idle one; explicit IDs still address managed subagents. Parent sessions continue to require an ID.
+
 ### Changed
 
 - Migrated the development environment and tooling to Vite+: Node is pinned via `.node-version`, while dependency installation, Vitest, Oxfmt, Oxlint, and type checks run through `vp`. Oxlint now enforces the test-only no-explicit-`any` policy, replacing its Bash scanner. npm 11.9.0 is the pinned package-manager backend. The extension remains source-only, with no generated build output.
+
+### Fixed
+
+- Parent-directed subagent messages now render with a `Message from …` heading, model, thinking, and runtime statistics, the originating task description, and the Markdown body instead of raw sender labels. Sender metadata is persisted so the heading survives agent cleanup; older messages resolve retained agents when possible.
+- Subagent prompts now explain that final responses are delivered automatically and reserve `MessageAgent` for actionable updates while work continues. Agents that stop on a blocker or question are instructed to report it only in their final response. They explicitly prohibit routine progress, successful test reports, ready/done notices, and reworded completion summaries. The guidance is added per run only while `MessageAgent` is among the subagent's active tools, in all system prompt modes; message delivery itself is unchanged.
 
 ## [1.17.1] - 2026-10-16
 

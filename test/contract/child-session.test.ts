@@ -293,7 +293,6 @@ describe("contract: child session matches a normal pi session", () => {
 
     expect(spawnBracket.maxDepth).toBe(1);
     expect(spawnBracket.depth).toBe(0);
-
     await disposeChildSession(child);
   });
 

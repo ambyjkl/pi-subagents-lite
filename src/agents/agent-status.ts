@@ -62,11 +62,14 @@ export async function executeAgentStatusTool(
   _signal: AbortSignal | undefined,
   _onUpdate: ((update: any) => void) | undefined,
   _ctx: ExtensionContext,
+  receivesCompletionNotifications = true,
 ): Promise<any> {
   const manager = getManager()!;
   const agents = manager.listAgents();
 
-  const nudge = "Don't poll — you'll receive notifications when agents complete.";
+  const nudge = receivesCompletionNotifications
+    ? "Don't poll — you'll receive notifications when agents complete."
+    : "Don't poll — completion notifications are delivered to the parent agent.";
 
   if (agents.length === 0) {
     return {

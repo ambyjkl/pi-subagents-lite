@@ -41,8 +41,10 @@ The `/agents` menu covers active and settled agents (view, steer or continue, st
 
 - `Agent` spawns a sub-agent (see [Agent options](#agent-options) for parameters).
 - `StopAgent` stops a running or queued agent by ID. IDs come from the spawn result, the stop error, or `/agents`.
-- `MessageAgent` gives an existing agent more input by ID: a running one picks it up at its next turn boundary; a settled one continues with its own context if its session is live and a model concurrency slot is available.
+- `MessageAgent` gives an existing agent more input by ID: a running one picks it up at its next turn boundary; a settled one continues with its own context if its session is live and a model concurrency slot is available. Subagents can also use it; omitting `agent_id` (or setting it to `null`) sends the message to their parent instead.
 - `AgentStatus` lists every running and queued agent, plus a configurable number of recently settled agents (default: twice the default concurrency). It tells the LLM not to poll for updates.
+
+Subagents receive `MessageAgent` and `AgentStatus` when this extension is loaded in their sessions, subject to their tool settings. They can list and message other managed subagents, but cannot spawn or stop agents. Parent-directed messages steer a busy parent or wake an idle parent, and display a `Message from …` heading with the model, thinking level, runtime statistics, and originating task description above the message body. Completion notifications still go only to the parent. Subagents whose active tools include `MessageAgent` receive prompt guidance that reserves it for actionable updates while work continues; blockers and questions encountered when stopping belong in the final response. Routine progress, successful test results, and ready/done summaries belong only in the automatically delivered final response.
 
 Foreground agents keep the `Agent` tool call open until they finish and are stopped by the parent's interrupt. Background agents return immediately and do not inherit that interrupt, but can still be steered or stopped through the UI or tools.
 

@@ -93,7 +93,7 @@ export function setCoordinator(c: SpawnCoordinator | null): void {
 /**
  * Nesting depth of in-flight subagent spawns. Subagent re-loads of this
  * extension would clobber parent-owned shell singletons; the factory checks
- * this flag and stays inert while a subagent is spawning.
+ * this flag and registers only communication tools while a subagent is spawning.
  */
 let subagentSpawnDepth = 0;
 

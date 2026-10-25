@@ -10,6 +10,17 @@ import type { AgentConfig, SystemPromptMode } from "../agents/types.ts";
 import type { SkillMeta, PreloadedSkill } from "./skill-loader.ts";
 import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
 
+/**
+ * Guidance for subagents that can call MessageAgent. Added per run by the child
+ * extension only when that tool is active (pi omits tool promptGuidelines when
+ * a custom system prompt is supplied, as every child session does).
+ */
+export const COMMUNICATION_GUIDANCE = [
+  "# Communication",
+  "- Final responses reach the parent automatically: if stopping, report everything there, including blockers and questions. Use MessageAgent only while continuing work when the recipient must act before you finish.",
+  "- Do not send routine progress, successful test results, ready/done notices, or completion summaries—even reworded ones.",
+].join("\n");
+
 /** Extra sections to inject into the system prompt (skills). */
 export interface PromptExtras {
   /** Preloaded skill contents to inject (full content + description). */
