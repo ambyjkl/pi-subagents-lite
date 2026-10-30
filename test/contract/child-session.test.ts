@@ -276,6 +276,29 @@ afterAll(() => {
   for (const root of workspaceRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
+describe("contract: child extension reload across cwd", () => {
+  it("registers only communication tools when the extension reloads for a child cwd", async () => {
+    const workspace = makeWorkspace("subagents-child-cwd");
+    workspace.writeGlobalSettings({ extensions: [path.resolve("src/index.ts")] });
+    const childCwd = path.join(workspace.project, "worktree");
+    fs.mkdirSync(childCwd, { recursive: true });
+
+    const { session } = await createChildSession(parentCtx(workspace.project), "general-purpose", {
+      pi: stubPi(),
+      cwd: childCwd,
+    });
+    try {
+      const tools = registryOf(session);
+      expect(tools).toContain("MessageAgent");
+      expect(tools).toContain("AgentStatus");
+      expect(tools).not.toContain("Agent");
+      expect(tools).not.toContain("StopAgent");
+    } finally {
+      await disposeChildSession(session);
+    }
+  });
+});
+
 describe("contract: child session matches a normal pi session", () => {
   it("with unconfigured defaultTools, registries and active sets are equal", async () => {
     const workspace = makeWorkspace("unconfigured");
