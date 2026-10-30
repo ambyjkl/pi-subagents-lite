@@ -172,8 +172,7 @@ export function registerCommunicationTools(pi: ExtensionAPI, parent?: ParentAgen
   if (parent) {
     pi.on("before_agent_start", (event) => {
       if (!pi.getActiveTools().includes(messageAgentTool.name)) return;
-      const options = event.systemPromptOptions;
-      options.appendSystemPrompt = [options.appendSystemPrompt, COMMUNICATION_GUIDANCE].filter(Boolean).join("\n\n");
+      event.systemPromptOptions.sections.subagent_communication = COMMUNICATION_GUIDANCE;
     });
   }
 

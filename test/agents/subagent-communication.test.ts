@@ -39,7 +39,7 @@ import { getPiInstance, getSessionCtx, setPiInstance, setSessionCtx } from "../.
 
 const registerTool = vi.fn<ExtensionAPI["registerTool"]>();
 interface StartEvent {
-  systemPromptOptions: { appendSystemPrompt: string };
+  systemPromptOptions: { sections: Record<string, string> };
 }
 const on = vi.fn<(event: string, handler: (event: StartEvent) => void) => void>();
 const getActiveTools = vi.fn<ExtensionAPI["getActiveTools"]>();
@@ -233,21 +233,26 @@ describe("subagent communication tools", () => {
       return call[1];
     }
 
-    function run(appendSystemPrompt: string) {
-      const event = { systemPromptOptions: { appendSystemPrompt } };
+    function run(sections: Record<string, string> = {}) {
+      const event = { systemPromptOptions: { sections: { ...sections } } };
       startHandler()(event);
-      return event.systemPromptOptions.appendSystemPrompt;
+      return event.systemPromptOptions.sections;
     }
 
-    it("adds guidance beside existing addenda while MessageAgent is active", () => {
+    it("adds guidance as a trailing prompt section while MessageAgent is active", () => {
       getActiveTools.mockReturnValue(["read", "MessageAgent"]);
-      expect(run("Existing addendum")).toBe(`Existing addendum\n\n${COMMUNICATION_GUIDANCE}`);
-      expect(run("")).toBe(COMMUNICATION_GUIDANCE);
+      expect(run({ existing_extension: "Existing extension section" })).toEqual({
+        existing_extension: "Existing extension section",
+        subagent_communication: COMMUNICATION_GUIDANCE,
+      });
+      expect(run()).toEqual({ subagent_communication: COMMUNICATION_GUIDANCE });
     });
 
     it("omits guidance when tool selection deactivates MessageAgent", () => {
       getActiveTools.mockReturnValue(["read", "AgentStatus"]);
-      expect(run("Existing addendum")).toBe("Existing addendum");
+      expect(run({ existing_extension: "Existing extension section" })).toEqual({
+        existing_extension: "Existing extension section",
+      });
     });
 
     it("does not register a prompt hook outside subagents", () => {
