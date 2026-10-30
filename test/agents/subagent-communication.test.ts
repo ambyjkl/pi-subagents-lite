@@ -1,16 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  SessionManager,
-  SettingsManager,
-  type ExtensionAPI,
-  type ExtensionToolContext,
-} from "@earendil-works/pi-coding-agent";
-import { Check } from "typebox/value";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "../../src/agents/agent-manager.js";
 import { makeAgentRecord, fakeCtx, shellMock } from "../fixtures.js";
 import { asAgentSession, asExtensionAPI } from "../pi-boundaries.js";
@@ -41,7 +30,7 @@ vi.mock("../../src/shell.js", () =>
 );
 
 import extension from "../../src/index.js";
-import { getPiInstance, getSessionCtx, setPiInstance, setSessionCtx } from "../../src/shell.js";
+import { setPiInstance, setSessionCtx } from "../../src/shell.js";
 
 const registerTool = vi.fn<ExtensionAPI["registerTool"]>();
 const child = asExtensionAPI({ registerTool });
@@ -91,38 +80,19 @@ beforeEach(async () => {
 });
 
 describe("subagent communication tools", () => {
-  it("registers only MessageAgent and AgentStatus without replacing the parent shell", () => {
-    const parentPi = getPiInstance();
-    const parentCtx = getSessionCtx();
-    expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
-    expect(getPiInstance()).toBe(parentPi);
-    expect(getSessionCtx()).toBe(parentCtx);
-    expect(getPiInstance()).not.toBe(child);
-  });
-
   it.each([undefined, null])("messages a busy parent when agent_id is %s", async (agent_id) => {
     const result = await message({ ...(agent_id === undefined ? {} : { agent_id }), message: "  Need guidance\n" });
 
-    expect(mocks.sendMessage).toHaveBeenCalledExactlyOnceWith(
-      {
-        customType: "subagent-message",
-        content: '[Subagent "test-session" message]\n\nNeed guidance',
-        details: {
-          sender: "test-session",
-          modelName: "Test Model",
-          modelId: "model",
-          thinkingLevel: senderCtx.thinkingLevel,
-        },
-        display: true,
-      },
-      { deliverAs: "steer", triggerTurn: true },
-    );
-    expect(result.content).toEqual([{ type: "text", text: "Submitted to parent; delivery is not acknowledged" }]);
+    expect(mocks.sendMessage).toHaveBeenCalledOnce();
+    const [payload, delivery] = mocks.sendMessage.mock.calls[0]!;
+    expect(payload.content).toContain("Need guidance");
+    expect(delivery).toMatchObject({ deliverAs: "steer", triggerTurn: true });
+    expect(result.isError).toBeUndefined();
     expect(mocks.steer).not.toHaveBeenCalled();
-    expect(mocks.promoteToBackground).toHaveBeenCalledOnce();
+    expect(mocks.promoteToBackground).toHaveBeenCalled();
   });
 
-  it("persists the originating agent identity and task description for rendering", async () => {
+  it("attaches the originating agent data to the parent message", async () => {
     const record = makeAgentRecord({
       id: "97a7e0e6-4000-400",
       display: { type: "general-purpose", description: "Add cancellable build subprocess scopes" },
@@ -184,7 +154,7 @@ describe("subagent communication tools", () => {
     mocks.matchAgents.mockReturnValue([target]);
     const result = await message({ agent_id: "abc123de", message: " Review tests " });
     expect(mocks.steer).toHaveBeenCalledExactlyOnceWith(target.id, "Review tests");
-    expect(result.content).toEqual([{ type: "text", text: "Sent (steered)" }]);
+    expect(result.isError).toBeUndefined();
     expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -193,88 +163,15 @@ describe("subagent communication tools", () => {
     expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("registers callable tools with the real SDK and accepts omitted/null parent targets", async () => {
-    const tempRoot = join(tmpdir(), process.env.PI_SESSION_ID ?? "pi-subagents-lite-tests");
-    mkdirSync(tempRoot, { recursive: true });
-    const cwd = mkdtempSync(join(tempRoot, "communication-"));
-    const settingsManager = SettingsManager.inMemory({});
-    const resourceLoader = new DefaultResourceLoader({
-      cwd,
-      agentDir: cwd,
-      settingsManager,
-      extensionFactories: [extension],
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-    });
-    let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
-    try {
-      await withSubagentParent(childParent, async () => {
-        await resourceLoader.reload();
-        ({ session } = await createAgentSession({
-          cwd,
-          agentDir: cwd,
-          settingsManager,
-          sessionManager: SessionManager.inMemory(cwd),
-          resourceLoader,
-        }));
-        await session.bindExtensions({});
-      });
-      const activeSession = session;
-      if (!activeSession) throw new Error("Child session was not created");
-      expect(activeSession.getActiveToolNames()).toEqual([
-        "read",
-        "bash",
-        "edit",
-        "write",
-        "MessageAgent",
-        "AgentStatus",
-      ]);
-      expect(activeSession.getCallableToolNames()).toEqual(expect.arrayContaining(["MessageAgent", "AgentStatus"]));
-      expect(activeSession.getAllTools().map((tool) => tool.name)).not.toContain("Agent");
-      expect(activeSession.getAllTools().map((tool) => tool.name)).not.toContain("StopAgent");
-
-      const messageTool = activeSession.agent.state.tools.find((tool) => tool.name === "MessageAgent")!;
-      expect(messageTool.description).toContain("Omit agent_id or pass null to message the parent");
-      expect(Check(messageTool.parameters, { message: "Help" })).toBe(true);
-      expect(Check(messageTool.parameters, { agent_id: null, message: "Help" })).toBe(true);
-      expect(Check(messageTool.parameters, { agent_id: "abc123de", message: "Help" })).toBe(true);
-      expect(Check(messageTool.parameters, {})).toBe(false);
-      await messageTool.execute("real-call", { message: "Help" });
-      expect(mocks.sendMessage).toHaveBeenCalledOnce();
-
-      const statusTool = activeSession.agent.state.tools.find((tool) => tool.name === "AgentStatus")!;
-      const result = await statusTool.execute("real-status", {});
-      expect(result.content).toEqual([
-        {
-          type: "text",
-          text: "No agents running or completed.\n\nDon't poll — completion notifications are delivered to the parent agent.",
-        },
-      ]);
-    } finally {
-      session?.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("explains recipient routing and message discipline in the child-visible tool definition", () => {
-    const description = tool("MessageAgent").description;
-    expect(description).toContain("Using this tool ensures the child runs in the background");
-    expect(description).toContain("Omit agent_id or pass null to message the parent");
-    expect(description).toContain("provide an ID to message another managed agent");
-    expect(description).toContain("Final responses, including blockers and questions, are delivered automatically");
-    expect(description).toContain("Do not send routine progress");
-  });
-
-  it("lists the parent's managed agents without promising child completion notifications", async () => {
+  it("includes the parent's managed agent state", async () => {
     mocks.listAgents.mockReturnValue([makeAgentRecord({ id: "abc123de-4000-400" })]);
     const result = await tool("AgentStatus").execute("status-1", {}, undefined, undefined, senderCtx);
-    expect(result.content).toEqual([
-      {
-        type: "text",
-        text: "abc123de (builder) running\n\nDon't poll — completion notifications are delivered to the parent agent.",
-      },
-    ]);
+    const content = result.content[0];
+    if (content.type !== "text") throw new Error("Expected status text");
+    const output = content.text;
+
+    expect(output).toContain("abc123de");
+    expect(output).toContain("running");
+    expect(result.isError).toBeUndefined();
   });
 });

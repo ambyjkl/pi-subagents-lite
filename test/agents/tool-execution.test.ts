@@ -35,7 +35,7 @@ const {
   mockDiscoverNewAgents: vi.fn(),
   mockResolveSubagentTrust: vi.fn(),
   mockResolveType: vi.fn<(type: string) => TypeResolution>((type) => ({ kind: "resolved", key: type })),
-  mockStoreState: { forceBackground: false, promoteForMessageAgent: false },
+  mockStoreState: { forceBackground: false },
 }));
 
 vi.mock("../../src/spawn/worktree-validator.js", () => ({
@@ -114,11 +114,10 @@ vi.mock("../../src/shell.js", () => ({
         signal: intent.signal,
       });
       const record = mockGetRecord(id);
-      const isBackground = intent.runInBackground || mockStoreState.promoteForMessageAgent;
-      if (!isBackground && record?.execution?.promise) {
+      if (!intent.runInBackground && record?.execution?.promise) {
         await record.execution.promise;
       }
-      return { agentId: id, record, isBackground };
+      return { agentId: id, record, isBackground: intent.runInBackground };
     }),
     isBackground: vi.fn(() => false),
     scheduleNudge: vi.fn(),
@@ -326,24 +325,6 @@ describe("executeAgentTool — worktree_path with background spawn", () => {
         compactionCount: 0,
       },
     });
-  });
-
-  it("returns a background result when MessageAgent promotes an explicit foreground request", async () => {
-    mockStoreState.promoteForMessageAgent = true;
-    try {
-      const result = await executeAgentTool(
-        "tc-message-agent-bg",
-        makeParams({ run_in_background: false }),
-        undefined,
-        undefined,
-        ctx,
-      );
-
-      expect(result.content[0].text).toContain("Agent running");
-      expect(result.content[0].text).toContain("MessageAgent is active");
-    } finally {
-      mockStoreState.promoteForMessageAgent = false;
-    }
   });
 
   it("validates worktree_path for background spawns too", async () => {

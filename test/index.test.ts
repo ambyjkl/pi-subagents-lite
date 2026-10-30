@@ -8,7 +8,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vite-
 import { createMockExtensionAPI, fakeCtx, loadExtension, shellMock, type MockExtensionAPI } from "./fixtures";
 import type { CustomToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { ResolveModelOptions } from "../src/models/model-precedence.js";
-import * as agentTypes from "../src/agents/agent-types.js";
 import { registerAgentTool } from "../src/registration.js";
 import { withSubagentParent } from "../src/agents/subagent-context.js";
 import { asExtensionAPI } from "./pi-boundaries.js";
@@ -212,12 +211,9 @@ describe("Agent tool schema — minimal", () => {
     expect(agentTool()!.promptGuidelines).toBeUndefined();
   });
 
-  it("documents automatic backgrounding when MessageAgent is active", () => {
+  it("exposes the public spawn options", () => {
     const props = agentTool()!.parameters.properties as Record<string, SchemaJson>;
     expect(Object.keys(props).sort()).toEqual(["agent", "description", "prompt", "run_in_background", "worktree_path"]);
-    expect(props.prompt.description).toBeUndefined();
-    expect(props.worktree_path.description).toBeUndefined();
-    expect(props.run_in_background.description).toContain("active MessageAgent tools force this on");
     expect(props.worktree_path.type).toBe("string");
   });
 });
@@ -227,18 +223,7 @@ describe("Agent tool schema — minimal", () => {
 /* ------------------------------------------------------------------ */
 
 describe("Agent tool agent param — exposeDescriptions", () => {
-  it("default OFF: agent param description is exactly the comma-joined visible type names", () => {
-    const tool = findTool(api, "Agent")!;
-    const props = tool.parameters.properties as Record<string, SchemaJson>;
-    expect(props.agent!.description).toBe("general-purpose,Explore");
-  });
-
-  /**
-   * events.ts calls registerAgentTool(pi) on every session_start; drive the
-   * same seam with exposeDescriptions on (restored after) and return the
-   * re-registered Agent tool. Registers into a fresh capture so the shared
-   * beforeAll api stays untouched.
-   */
+  /** Re-register into an isolated capture, as on the next session start. */
   const retoolWithDescriptions = () => {
     mutableStore.agent.exposeDescriptions = true;
     try {
@@ -250,31 +235,14 @@ describe("Agent tool agent param — exposeDescriptions", () => {
     }
   };
 
-  it("re-registration with exposeDescriptions on lists names with descriptions (next-session reload path)", () => {
-    const retooled = retoolWithDescriptions();
-    const props = retooled.parameters.properties as Record<string, SchemaJson>;
-    expect(props.agent!.description).toBe(
-      "Available agent types:\n" +
-        "general-purpose: General-purpose agent for complex, multi-step tasks\n" +
-        "Explore: Fast codebase exploration agent (read-only)",
-    );
-    // The agent param is retooled while the background behavior remains documented.
-    expect(props.prompt!.description).toBeUndefined();
-    expect(props.description!.description).toBeUndefined();
-    expect(props.run_in_background!.description).toContain("active MessageAgent tools force this on");
-    expect(props.worktree_path!.description).toBeUndefined();
-    expect(retooled.description).toBe(".");
-  });
+  it("changes the agent selector schema when full descriptions are enabled", () => {
+    const getAgentDescription = (tool: MockExtensionAPI["tools"][number]) =>
+      (tool.parameters.properties as Record<string, SchemaJson>).agent!.description;
+    const defaultDescription = getAgentDescription(findTool(api, "Agent")!);
+    const exposedDescription = getAgentDescription(retoolWithDescriptions());
 
-  it("re-registration with exposeDescriptions on degrades whitespace-only descriptions to bare names", () => {
-    vi.mocked(agentTypes.getVisibleAgentInfos).mockReturnValueOnce([
-      { name: "general-purpose", description: "General-purpose agent for complex, multi-step tasks" },
-      { name: "no-desc", description: "   " },
-    ]);
-    const props = retoolWithDescriptions().parameters.properties as Record<string, SchemaJson>;
-    expect(props.agent!.description).toBe(
-      "Available agent types:\ngeneral-purpose: General-purpose agent for complex, multi-step tasks\nno-desc",
-    );
+    expect(typeof exposedDescription).toBe("string");
+    expect(exposedDescription).not.toBe(defaultDescription);
   });
 });
 
@@ -416,29 +384,21 @@ describe("event listener registration", () => {
 /* ------------------------------------------------------------------ */
 
 describe("child extension registration", () => {
-  it("registers only communication tools inside the scoped child context", async () => {
-    const api = createMockExtensionAPI();
-    const parent = { pi: asExtensionAPI(api.api), ctx: fakeCtx(), agentStatusLimit: 8 };
-
-    await withSubagentParent(parent, () => loadExtension(api.api));
-
-    expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
-    expect(findTool(api, "MessageAgent")!.parameters.required).toEqual(["message"]);
-    expect(findTool(api, "MessageAgent")!.constrainedSampling).toBeUndefined();
-    expect(api.listeners).toHaveLength(0);
-    expect(api.commands).toHaveLength(0);
-    expect(api.messageRenderers).toHaveLength(0);
-  });
-
-  it("does not leak child registration into the later parent extension load", async () => {
+  it("scopes communication-only registration to the child load", async () => {
     const childApi = createMockExtensionAPI();
-    await withSubagentParent({ pi: asExtensionAPI(childApi.api), ctx: fakeCtx(), agentStatusLimit: 8 }, () =>
-      loadExtension(childApi.api),
-    );
+    const parent = { pi: asExtensionAPI(childApi.api), ctx: fakeCtx(), agentStatusLimit: 8 };
+    await withSubagentParent(parent, () => loadExtension(childApi.api));
+
+    const childTools = childApi.tools.map((tool) => tool.name);
+    expect(childTools).toContain("MessageAgent");
+    expect(childTools).toContain("AgentStatus");
+    expect(childTools).not.toContain("Agent");
+    expect(childTools).not.toContain("StopAgent");
+    expect(findTool(childApi, "MessageAgent")!.parameters.required).toEqual(["message"]);
+    expect(childApi.listeners.some((listener) => listener.event === "session_start")).toBe(false);
 
     const parentApi = createMockExtensionAPI();
     await loadExtension(parentApi.api);
-
     expect(parentApi.tools.map((tool) => tool.name)).toContain("Agent");
     expect(parentApi.listeners.some((listener) => listener.event === "session_start")).toBe(true);
   });

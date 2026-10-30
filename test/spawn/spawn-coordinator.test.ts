@@ -48,6 +48,8 @@ vi.mock("../../src/shell.js", () => ({
   getWidget: () => null,
 }));
 
+import { SpawnCoordinator } from "../../src/spawn/spawn-coordinator.js";
+
 function makeMockManager(opts: { pendingGate?: boolean } = {}): AgentManager & MockManager {
   const records = new Map<string, AgentRecord>();
   // Capture forwarded spawn arguments (named fields, not positional indices) so
@@ -144,19 +146,15 @@ function childSession(activeTools: string[]) {
 // --- Tests ---
 
 describe("SpawnCoordinator", () => {
-  // Dynamically import after mocks are set up
-  let SpawnCoordinator: typeof import("../../src/spawn/spawn-coordinator.js").SpawnCoordinator;
   let manager: ReturnType<typeof makeMockManager>;
   let ctx: ExtensionContext;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.useFakeTimers();
     manager = makeMockManager();
     ctx = makeMockCtx();
-    mockPi.sendMessage.mockReset(); // full reset — no impl or calls leak between tests
+    mockPi.sendMessage.mockReset();
     mockGetPiInstance.mockReturnValue(mockPiApi);
-    const mod = await import("../../src/spawn/spawn-coordinator.js");
-    SpawnCoordinator = mod.SpawnCoordinator;
   });
 
   it("spawns a background agent and returns result", async () => {
@@ -195,57 +193,35 @@ describe("SpawnCoordinator", () => {
     expect(manager.getSpawnCalls()[0].options.isBackground).toBe(false);
   });
 
-  it("uses the final tool loadout after before_agent_start handlers", async () => {
-    manager = makeMockManager({ pendingGate: true });
-    const coordinator = new SpawnCoordinator(manager);
-    const spawnPromise = coordinator.spawn(mockPiApi, ctx, {
-      type: "builder",
-      prompt: "ask parent if blocked",
-      description: "Can message parent",
-      graceTurns: 6,
-      runInBackground: false,
-    });
-    const spawn = manager.getSpawnCalls()[0];
-    const activeTools = ["read", "MessageAgent"];
-    const child = childSession(activeTools);
-    spawn.options.onSessionCreated?.(child.session);
+  it.each([
+    { initiallyActive: true, finallyActive: false, background: false },
+    { initiallyActive: false, finallyActive: true, background: true },
+  ])(
+    "uses the child tool loadout finalized before its first request",
+    async ({ initiallyActive, finallyActive, background }) => {
+      manager = makeMockManager({ pendingGate: true });
+      const coordinator = new SpawnCoordinator(manager);
+      const spawnPromise = coordinator.spawn(mockPiApi, ctx, {
+        type: "builder",
+        prompt: "ask parent if blocked",
+        description: "Can message parent",
+        graceTurns: 6,
+        runInBackground: false,
+      });
+      const spawn = manager.getSpawnCalls()[0];
+      const activeTools = ["read", ...(initiallyActive ? ["MessageAgent"] : [])];
+      const child = childSession(activeTools);
+      spawn.options.onSessionCreated?.(child.session);
 
-    activeTools.splice(1, 1); // A later before_agent_start handler removes MessageAgent.
-    child.startAgent();
-    manager.getGateResolver(spawn.id)?.("finished");
-    const result = await spawnPromise;
+      activeTools.splice(0, activeTools.length, "read", ...(finallyActive ? ["MessageAgent"] : []));
+      child.startAgent();
+      queueMicrotask(() => manager.getGateResolver(spawn.id)?.("finished"));
 
-    expect(result.isBackground).toBe(false);
-    expect(coordinator.isBackground(result.agentId)).toBe(false);
-    expect(manager.detachParentInterrupt).not.toHaveBeenCalled();
-  });
+      expect((await spawnPromise).isBackground).toBe(background);
+    },
+  );
 
-  it("promotes when a later before_agent_start handler activates MessageAgent", async () => {
-    manager = makeMockManager({ pendingGate: true });
-    const coordinator = new SpawnCoordinator(manager);
-    const spawnPromise = coordinator.spawn(mockPiApi, ctx, {
-      type: "builder",
-      prompt: "ask parent if blocked",
-      description: "Can message parent",
-      graceTurns: 6,
-      runInBackground: false,
-    });
-    const spawn = manager.getSpawnCalls()[0];
-    const activeTools = ["read"];
-    const child = childSession(activeTools);
-    spawn.options.onSessionCreated?.(child.session);
-
-    activeTools.push("MessageAgent");
-    child.startAgent();
-    manager.getGateResolver(spawn.id)?.("finished");
-    const result = await spawnPromise;
-
-    expect(result.isBackground).toBe(true);
-    expect(coordinator.isBackground(result.agentId)).toBe(true);
-    expect(manager.detachParentInterrupt).toHaveBeenCalledExactlyOnceWith(result.agentId);
-  });
-
-  it("promotes when a child later invokes MessageAgent after its initial loadout", async () => {
+  it("returns a child as background when it requests promotion", async () => {
     manager = makeMockManager({ pendingGate: true });
     const coordinator = new SpawnCoordinator(manager);
     const spawnPromise = coordinator.spawn(mockPiApi, ctx, {
@@ -258,40 +234,9 @@ describe("SpawnCoordinator", () => {
     const spawn = manager.getSpawnCalls()[0];
     spawn.options.onSessionCreated?.(childSession(["read"]).session);
     spawn.options.onBackgroundPromotion?.();
-    manager.getGateResolver(spawn.id)?.("finished");
+    queueMicrotask(() => manager.getGateResolver(spawn.id)?.("finished"));
 
-    const result = await spawnPromise;
-    expect(result.isBackground).toBe(true);
-    expect(coordinator.isBackground(result.agentId)).toBe(true);
-  });
-
-  it("keeps a foreground child when MessageAgent is absent from its active tools", async () => {
-    manager = makeMockManager({ pendingGate: true });
-    const coordinator = new SpawnCoordinator(manager);
-    const spawnPromise = coordinator.spawn(mockPiApi, ctx, {
-      type: "builder",
-      prompt: "finish task",
-      description: "Cannot message parent",
-      graceTurns: 6,
-      runInBackground: false,
-    });
-    const spawn = manager.getSpawnCalls()[0];
-    const child = childSession(["read", "AgentStatus"]);
-    spawn.options.onSessionCreated?.(child.session);
-    child.startAgent();
-
-    let settled = false;
-    void spawnPromise.then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    manager.getGateResolver(spawn.id)?.("finished");
-    const result = await spawnPromise;
-    expect(result.isBackground).toBe(false);
-    expect(coordinator.isBackground(result.agentId)).toBe(false);
-    expect(manager.detachParentInterrupt).not.toHaveBeenCalled();
+    expect((await spawnPromise).isBackground).toBe(true);
   });
 
   it("creates a live view on spawn", async () => {

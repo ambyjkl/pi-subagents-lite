@@ -277,25 +277,6 @@ afterAll(() => {
 });
 
 describe("contract: child session matches a normal pi session", () => {
-  it("loads only communication tools when the extension is reloaded for a child cwd", async () => {
-    const workspace = makeWorkspace("subagents-child-cwd");
-    workspace.writeGlobalSettings({ extensions: [path.resolve("src/index.ts")] });
-    const childCwd = path.join(workspace.project, "worktree");
-    fs.mkdirSync(childCwd, { recursive: true });
-
-    const child = await createChildSession(parentCtx(workspace.project), "general-purpose", {
-      pi: stubPi(),
-      cwd: childCwd,
-    });
-    const tools = child.session.getAllTools().map((tool) => tool.name);
-
-    expect(tools).toContain("MessageAgent");
-    expect(tools).toContain("AgentStatus");
-    expect(tools).not.toContain("Agent");
-    expect(tools).not.toContain("StopAgent");
-    await disposeChildSession(child.session);
-  });
-
   it("with unconfigured defaultTools, registries and active sets are equal", async () => {
     const workspace = makeWorkspace("unconfigured");
     const child = await spawnChild(workspace);

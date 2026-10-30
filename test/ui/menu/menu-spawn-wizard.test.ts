@@ -362,7 +362,7 @@ function pickWorktree(path: string) {
 
 async function spawnOptions(): Promise<SpawnOptions> {
   settingsListCalls[1].items.find((i) => i.id === "spawn")!.submenu!("", vi.fn());
-  await vi.waitFor(() => expect(mockModules.mockManager.spawn).toHaveBeenCalled());
+  await Promise.resolve();
   return mockModules.mockManager.spawn.mock.calls[0][4];
 }
 
@@ -1130,30 +1130,12 @@ describe("showSpawnAgentMenu — spawn action", () => {
     expect(mockDone).toHaveBeenCalled();
   });
 
-  it("notifies when MessageAgent forces an explicitly foreground menu spawn into background", async () => {
-    mockModules.promoteMessageAgent.enabled = true;
-    const ctx = createMockWizardCtx(["general-purpose", "fix the bug", undefined]);
-    await completeWizard(ctx);
-    settingsListCalls[1].onChange("background", "OFF");
-
-    const item = settingsListCalls[1].items.find((i) => i.id === "spawn")!;
-    item.submenu!("", vi.fn());
-
-    await vi.waitFor(() =>
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "MessageAgent is active, so this agent was started in the background.",
-        "info",
-      ),
-    );
-  });
-
   it("invokes coordinator.spawn with the collected intent", async () => {
     const ctx = createMockWizardCtx(["general-purpose", "fix the bug", undefined]);
     await completeWizard(ctx);
     const item = settingsListCalls[1].items.find((i) => i.id === "spawn")!;
     item.submenu!("", vi.fn());
 
-    await vi.waitFor(() => expect(mockModules.mockManager.spawn).toHaveBeenCalled());
     const [, , type, prompt, options] = mockModules.mockManager.spawn.mock.calls[0];
     expect(type).toBe("general-purpose");
     expect(prompt).toBe("fix the bug");
@@ -1191,7 +1173,7 @@ describe("showSpawnAgentMenu — spawn action", () => {
 
     const spawnItem = settingsListCalls[1].items.find((i) => i.id === "spawn")!;
     spawnItem.submenu!("", vi.fn());
-    await vi.waitFor(() => expect(mockModules.mockManager.spawn).toHaveBeenCalled());
+    await Promise.resolve();
     const options = mockModules.mockManager.spawn.mock.calls[0][4];
     expect(options.worktreePath).toBe("/test-feature");
   });
@@ -1206,7 +1188,7 @@ describe("showSpawnAgentMenu — spawn action", () => {
     const item = settingsListCalls[1].items.find((i) => i.id === "spawn")!;
     item.submenu!("", vi.fn());
 
-    await vi.waitFor(() => expect(ctx.ui.notify).toHaveBeenCalled());
+    await Promise.resolve();
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Spawn failed: boom"), "error");
   });
 });
