@@ -1130,6 +1130,23 @@ describe("showSpawnAgentMenu — spawn action", () => {
     expect(mockDone).toHaveBeenCalled();
   });
 
+  it("notifies when MessageAgent forces an explicitly foreground menu spawn into background", async () => {
+    mockModules.promoteMessageAgent.enabled = true;
+    const ctx = createMockWizardCtx(["general-purpose", "fix the bug", undefined]);
+    await completeWizard(ctx);
+    settingsListCalls[1].onChange("background", "OFF");
+
+    const item = settingsListCalls[1].items.find((i) => i.id === "spawn")!;
+    item.submenu!("", vi.fn());
+
+    await vi.waitFor(() =>
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "MessageAgent is active, so this agent was started in the background.",
+        "info",
+      ),
+    );
+  });
+
   it("invokes coordinator.spawn with the collected intent", async () => {
     const ctx = createMockWizardCtx(["general-purpose", "fix the bug", undefined]);
     await completeWizard(ctx);

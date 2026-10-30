@@ -1,16 +1,13 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { makeAgentRecord, shellMock } from "../fixtures.js";
+import { shellMock } from "../fixtures.js";
 import { registerAgents } from "../../src/agents/agent-types.js";
 import { DEFAULT_AGENTS } from "../../src/agents/default-agents.js";
 import { renderSubagentMessage } from "../../src/ui/renderer.js";
 import type { Theme } from "../../src/ui/types.js";
 
-const { matchAgents } = vi.hoisted(() => ({ matchAgents: vi.fn() }));
-vi.mock("../../src/shell.js", () =>
-  shellMock({ manager: { matchAgents }, store: { agent: { showAgentColors: false } } }),
-);
+vi.mock("../../src/shell.js", () => shellMock({ store: { agent: { showAgentColors: false } } }));
 
 const theme: Theme = {
   fg: (_color, text) => text,
@@ -19,7 +16,6 @@ const theme: Theme = {
 };
 
 const details = {
-  agentId: "97a7e0e6-4000-400",
   sender: "general-purpose#97a7e0e6",
   type: "general-purpose",
   description: "Add cancellable build subprocess scopes",
@@ -37,11 +33,6 @@ function render(message: Parameters<typeof renderSubagentMessage>[0], width = 10
 beforeAll(() => {
   initTheme("dark", false);
   registerAgents(new Map(DEFAULT_AGENTS));
-});
-
-beforeEach(() => {
-  matchAgents.mockReset();
-  matchAgents.mockReturnValue([]);
 });
 
 describe("subagent message rendering", () => {
@@ -63,7 +54,6 @@ describe("subagent message rendering", () => {
       "",
       "Lorem ipsum",
     ]);
-    expect(matchAgents).not.toHaveBeenCalled();
   });
 
   it("renders saved runtime statistics in the same format as completed agents", () => {
@@ -114,42 +104,21 @@ describe("subagent message rendering", () => {
     ]);
   });
 
-  it("resolves the task of a legacy message from its sender prefix", () => {
-    matchAgents.mockReturnValue([
-      makeAgentRecord({
-        id: details.agentId,
-        display: { ...details, invocation: { modelName: details.modelId, thinkingLevel: "high" } },
-      }),
-    ]);
-    expect(render({ content: `[Subagent "${details.sender}" message]\n\nLorem ipsum` })).toEqual([
-      "◈ Message from Agent",
+  it("uses the saved agent type if its custom definition is no longer registered", () => {
+    const removedAgent = {
+      ...details,
+      sender: "security-review#97a7e0e6",
+      type: "security-review",
+      description: "Review authentication boundaries",
+    };
+    expect(
+      render({ content: `[Subagent "${removedAgent.sender}" message]\n\nFindings`, details: removedAgent }),
+    ).toEqual([
+      "◈ Message from security-review",
       "  (gpt-6.1-terra • high)",
-      "  Add cancellable build subprocess scopes",
+      "  Review authentication boundaries",
       "",
-      "Lorem ipsum",
-    ]);
-    expect(matchAgents).toHaveBeenCalledExactlyOnceWith("97a7e0e6");
-  });
-
-  it("falls back to the sender when an old agent is no longer retained", () => {
-    expect(render({ content: `[Subagent "${details.sender}" message]\n\nLorem ipsum` })).toEqual([
-      "◈ Message from Agent",
-      "  general-purpose#97a7e0e6",
-      "",
-      "Lorem ipsum",
-    ]);
-  });
-
-  it("does not assign an ambiguous legacy prefix to either task", () => {
-    matchAgents.mockReturnValue([
-      makeAgentRecord({ id: "97a7e0e6-aaaa-400", display: { description: "First task" } }),
-      makeAgentRecord({ id: "97a7e0e6-bbbb-400", display: { description: "Second task" } }),
-    ]);
-    expect(render({ content: `[Subagent "${details.sender}" message]\n\nLorem ipsum` })).toEqual([
-      "◈ Message from Agent",
-      "  general-purpose#97a7e0e6",
-      "",
-      "Lorem ipsum",
+      "Findings",
     ]);
   });
 

@@ -39,17 +39,9 @@ const contractStore = vi.hoisted(() => ({
   },
 }));
 
-const spawnBracket = vi.hoisted(() => ({ depth: 0, maxDepth: 0 }));
-
 vi.mock("../../src/shell.js", () => ({
   getStore: () => contractStore,
-  enterSubagentSpawn: () => {
-    spawnBracket.depth++;
-    spawnBracket.maxDepth = Math.max(spawnBracket.maxDepth, spawnBracket.depth);
-  },
-  exitSubagentSpawn: () => {
-    spawnBracket.depth--;
-  },
+  getManager: () => undefined,
 }));
 
 import {
@@ -285,15 +277,23 @@ afterAll(() => {
 });
 
 describe("contract: child session matches a normal pi session", () => {
-  it("createChildSession brackets itself for extension loading, entering and exiting once", async () => {
-    spawnBracket.depth = 0;
-    spawnBracket.maxDepth = 0;
-    const workspace = makeWorkspace("bracket");
-    const child = await spawnChild(workspace);
+  it("loads only communication tools when the extension is reloaded for a child cwd", async () => {
+    const workspace = makeWorkspace("subagents-child-cwd");
+    workspace.writeGlobalSettings({ extensions: [path.resolve("src/index.ts")] });
+    const childCwd = path.join(workspace.project, "worktree");
+    fs.mkdirSync(childCwd, { recursive: true });
 
-    expect(spawnBracket.maxDepth).toBe(1);
-    expect(spawnBracket.depth).toBe(0);
-    await disposeChildSession(child);
+    const child = await createChildSession(parentCtx(workspace.project), "general-purpose", {
+      pi: stubPi(),
+      cwd: childCwd,
+    });
+    const tools = child.session.getAllTools().map((tool) => tool.name);
+
+    expect(tools).toContain("MessageAgent");
+    expect(tools).toContain("AgentStatus");
+    expect(tools).not.toContain("Agent");
+    expect(tools).not.toContain("StopAgent");
+    await disposeChildSession(child.session);
   });
 
   it("with unconfigured defaultTools, registries and active sets are equal", async () => {

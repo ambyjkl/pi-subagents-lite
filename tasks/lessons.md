@@ -239,5 +239,9 @@ Drive real keyboard input through the component returned by ui.custom before del
 **Next time:** Enforce syntactic policies with a scoped Oxlint rule; keep exceptions local and documented, and remove bespoke scanners.
 
 ## Pi prompt-section ordering and cache stability - 2026-10-30
-**What failed:** Treating `appendSystemPrompt` as a true suffix; Pi places its addendum before project context, skills, and cwd, so a conditional change there changes the prompt before those later sections.
-**Next time:** Inspect Pi's section builder before choosing an insertion point. Use a late custom section for optional guidance that should remain a prompt suffix, and keep its value stable across turns to avoid unnecessary prompt changes.
+**What failed:** Treating `appendSystemPrompt` as a true suffix; Pi places its addendum before project context, skills, and cwd, so a conditional change there alters the prompt before those later sections.
+**Next time:** Inspect Pi's section builder before choosing an insertion point. Put guidance tied to a tool's availability in that active tool's description/schema; use a trailing custom section only for genuinely system-level guidance, and keep it stable across turns.
+
+## Pi extension message acknowledgement - 2026-10-30
+**What failed:** Returning “sent” after calling `pi.sendMessage`, whose extension API is fire-and-forget and reports asynchronous persistence failures separately from the caller.
+**Next time:** Say “submitted” or best-effort unless the API provides an awaitable delivery acknowledgement. Don't add retries or polling without a delivery contract.

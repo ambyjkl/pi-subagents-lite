@@ -1,5 +1,5 @@
 import { Type, type TSchema } from "typebox";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { formatAgentTypeDescriptions, getVisibleAgentInfos } from "./agents/agent-types.ts";
 import { executeAgentTool, executeMessageAgentTool, executeStopAgentTool } from "./agents/tool-execution.ts";
 import { executeAgentStatusTool } from "./agents/agent-status.ts";
@@ -14,7 +14,7 @@ import {
 } from "./ui/renderer.ts";
 import { showAgentsMainMenu } from "./ui/menu/menus.ts";
 import { getStore } from "./shell.ts";
-import { COMMUNICATION_GUIDANCE } from "./prompt/prompts.ts";
+import type { SubagentParentContext } from "./agents/subagent-context.ts";
 
 // Provider-side json_schema enforcement; "prefer" falls back gracefully on
 // providers without strict mode (e.g. local Ollama).
@@ -54,7 +54,9 @@ export function registerAgentTool(pi: ExtensionAPI): void {
       prompt: Type.String(),
       description: optional(Type.String()),
       agent: optional(agentType),
-      run_in_background: optional(Type.Boolean()),
+      run_in_background: optional(
+        Type.Boolean({ description: "Request background execution; active MessageAgent tools force this on." }),
+      ),
       worktree_path: optional(Type.String()),
     },
     useConstrained
@@ -135,27 +137,40 @@ export function registerTools(pi: ExtensionAPI): void {
   registerCommandsAndMessages(pi);
 }
 
-interface ParentAgent {
-  pi: ExtensionAPI;
-  ctx: ExtensionContext;
-}
-
 /** Register just the shared communication tools without touching the parent shell. */
-export function registerCommunicationTools(pi: ExtensionAPI, parent?: ParentAgent): void {
+export function registerCommunicationTools(pi: ExtensionAPI, parent?: SubagentParentContext): void {
   const executeMessage: typeof executeMessageAgentTool = (toolCallId, params, signal, onUpdate, ctx) => {
+    parent?.onBackgroundPromotion?.();
     if (parent && params.agent_id == null) {
-      return sendParentMessage(parent.pi, parent.ctx, ctx, params.message);
+      return sendParentMessage(parent, ctx, params.message);
     }
-    return executeMessageAgentTool(toolCallId, params, signal, onUpdate, ctx);
+    return executeMessageAgentTool(
+      toolCallId,
+      params,
+      signal,
+      onUpdate,
+      ctx,
+      parent?.manager,
+      parent?.agentStatusLimit,
+    );
   };
 
   const messageAgentTool = {
     name: "MessageAgent",
     label: "MessageAgent",
-    description: ".",
+    description: parent
+      ? "Using this tool ensures the child runs in the background so the parent can act while you continue. The parent can steer you in reply at your next turn. Send only actionable updates. Omit agent_id or pass null to message the parent; provide an ID to message another managed agent. Final responses, including blockers and questions, are delivered automatically. Do not send routine progress, successful test results, or completion summaries."
+      : ".",
     parameters: Type.Object(
       {
-        agent_id: parent ? Type.Optional(Type.Union([Type.String(), Type.Null()])) : Type.String(),
+        agent_id: parent
+          ? Type.Optional(
+              Type.Union([
+                Type.String({ description: "ID of another managed agent. Omit or pass null to message the parent." }),
+                Type.Null(),
+              ]),
+            )
+          : Type.String(),
         message: Type.String(),
       },
       { additionalProperties: false },
@@ -167,17 +182,17 @@ export function registerCommunicationTools(pi: ExtensionAPI, parent?: ParentAgen
   };
   pi.registerTool(messageAgentTool);
 
-  // Only subagents (parent set) get delivery guidance, and only while the tool is
-  // actually active after tool selection.
-  if (parent) {
-    pi.on("before_agent_start", (event) => {
-      if (!pi.getActiveTools().includes(messageAgentTool.name)) return;
-      event.systemPromptOptions.sections.subagent_communication = COMMUNICATION_GUIDANCE;
-    });
-  }
-
   const executeStatus: typeof executeAgentStatusTool = (toolCallId, params, signal, onUpdate, ctx) => {
-    return executeAgentStatusTool(toolCallId, params, signal, onUpdate, ctx, !parent);
+    return executeAgentStatusTool(
+      toolCallId,
+      params,
+      signal,
+      onUpdate,
+      ctx,
+      !parent,
+      parent?.manager,
+      parent?.agentStatusLimit,
+    );
   };
   const agentStatusTool = {
     name: "AgentStatus",

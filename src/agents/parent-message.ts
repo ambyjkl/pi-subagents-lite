@@ -1,10 +1,9 @@
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getManager } from "../shell.ts";
+import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildAgentDetails } from "./tool-execution.ts";
+import type { SubagentParentContext } from "./subagent-context.ts";
 
 export interface SubagentMessageDetails extends Record<string, unknown> {
   sender?: string;
-  agentId?: string;
   type?: string;
   description?: string;
   modelName?: string;
@@ -14,8 +13,7 @@ export interface SubagentMessageDetails extends Record<string, unknown> {
 
 /** Deliver to the captured parent runtime, not whichever session now owns the shell. */
 export async function sendParentMessage(
-  parent: ExtensionAPI,
-  parentCtx: ExtensionContext,
+  parent: SubagentParentContext,
   senderCtx: ExtensionContext,
   message: unknown,
 ): Promise<AgentToolResult<undefined>> {
@@ -23,9 +21,7 @@ export async function sendParentMessage(
   if (!text) throw new Error("message is required");
 
   const sender = senderCtx.sessionManager.getSessionName() ?? senderCtx.sessionManager.getSessionId();
-  const record = getManager()
-    ?.listAgents()
-    .find((record) => record.execution.session?.sessionManager === senderCtx.sessionManager);
+  const record = parent.manager?.getRecord(parent.agentId ?? "");
   const model = record?.execution.session?.model ?? senderCtx.model;
   const thinking =
     record?.execution.session?.thinkingLevel ?? record?.display.invocation?.thinkingLevel ?? senderCtx.thinkingLevel;
@@ -34,7 +30,6 @@ export async function sendParentMessage(
     ...(record
       ? {
           ...buildAgentDetails(record, { includeStats: true }),
-          agentId: record.id,
           type: record.display.type,
           description: record.display.description,
           durationMs: Math.max(0, (record.lifecycle.completedAt ?? Date.now()) - record.lifecycle.startedAt),
@@ -43,7 +38,7 @@ export async function sendParentMessage(
     ...(model ? { modelName: model.name, modelId: model.id } : {}),
     ...(thinking ? { thinkingLevel: thinking } : {}),
   };
-  parent.sendMessage(
+  parent.pi.sendMessage(
     {
       customType: "subagent-message",
       content: `[Subagent "${sender}" message]\n\n${text}`,
@@ -51,9 +46,12 @@ export async function sendParentMessage(
       display: true,
     },
     {
-      deliverAs: parentCtx.isIdle() ? "followUp" : "steer",
+      deliverAs: parent.ctx.isIdle() ? "followUp" : "steer",
       triggerTurn: true,
     },
   );
-  return { content: [{ type: "text", text: "Sent to parent" }], details: undefined };
+  return {
+    content: [{ type: "text", text: "Submitted to parent; delivery is not acknowledged" }],
+    details: undefined,
+  };
 }

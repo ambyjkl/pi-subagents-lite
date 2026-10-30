@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vite-plus/test";
-import { buildAgentPrompt, COMMUNICATION_GUIDANCE } from "../../src/prompt/prompts.js";
+import { buildAgentPrompt } from "../../src/prompt/prompts.js";
 import type { AgentConfig } from "../../src/agents/types.js";
 import type { EnvInfo } from "../../src/types.js";
 
@@ -210,32 +210,7 @@ describe("buildAgentPrompt — system prompt modes", () => {
   });
 });
 
-describe("buildAgentPrompt — communication", () => {
-  it.each(["replace", "inherit", "custom"] as const)(
-    "leaves delivery guidance to the tool-aware extension hook in %s mode",
-    (mode) => {
-      const prompt = buildAgentPrompt(
-        baseConfig,
-        "/test/cwd",
-        env,
-        { parentSystemPrompt: "Parent instructions.", customSystemPrompt: "Custom instructions." },
-        mode,
-      );
-
-      expect(prompt).not.toContain("# Communication");
-      expect(prompt).not.toContain("MessageAgent");
-      expect(prompt).toContain(`<agent_instructions>\n${baseConfig.systemPrompt}\n</agent_instructions>`);
-    },
-  );
-
-  it("explains automatic delivery and avoids duplicate completion messages", () => {
-    expect(COMMUNICATION_GUIDANCE.match(/^# Communication$/gm)).toHaveLength(1);
-    expect(COMMUNICATION_GUIDANCE).toContain("MessageAgent");
-    expect(COMMUNICATION_GUIDANCE).toMatch(/Final responses.*automatically.*stopping.*blockers.*questions/);
-    expect(COMMUNICATION_GUIDANCE).toMatch(/only while continuing work.*must act/);
-    expect(COMMUNICATION_GUIDANCE).toMatch(/Do not send .*progress.*test results.*completion summaries/);
-  });
-
+describe("buildAgentPrompt — cache prefix", () => {
   it("keeps the prompt prefix shared across agent identities for prompt caching", () => {
     const first = buildAgentPrompt(baseConfig, "/test/cwd", env);
     const second = buildAgentPrompt({ ...baseConfig, name: "other-agent" }, "/test/cwd", env);

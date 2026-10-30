@@ -10,6 +10,7 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { SubagentAgentManager } from "./subagent-context.ts";
 import type { AgentRecord } from "../types.ts";
 import { SHORT_ID_LENGTH } from "../types.ts";
 import { getManager, getStore } from "../shell.ts";
@@ -63,8 +64,11 @@ export async function executeAgentStatusTool(
   _onUpdate: ((update: any) => void) | undefined,
   _ctx: ExtensionContext,
   receivesCompletionNotifications = true,
+  managerOverride?: Pick<SubagentAgentManager, "listAgents">,
+  agentStatusLimit?: number,
 ): Promise<any> {
-  const manager = getManager()!;
+  const manager = managerOverride ?? getManager();
+  if (!manager) throw new Error("Agent manager is unavailable");
   const agents = manager.listAgents();
 
   const nudge = receivesCompletionNotifications
@@ -77,7 +81,7 @@ export async function executeAgentStatusTool(
     };
   }
 
-  const listText = formatAgentStatusList(agents, getStore().agent.agentStatusLimit);
+  const listText = formatAgentStatusList(agents, agentStatusLimit ?? getStore().agent.agentStatusLimit);
   return {
     content: [{ type: "text", text: `${listText}\n\n${nudge}` }],
   };

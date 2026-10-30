@@ -41,6 +41,7 @@ const hoisted = vi.hoisted(() => {
   const mockProjectTargetOffered = false;
   const mockStoreOverride = null as ConfigStore | null;
   const mockSessionShowCost = undefined as boolean | undefined;
+  const promoteMessageAgent = { enabled: false };
 
   const mockManager = {
     setConcurrency: vi.fn(),
@@ -112,6 +113,7 @@ const hoisted = vi.hoisted(() => {
     mockProjectTargetOffered,
     mockStoreOverride,
     mockSessionShowCost,
+    promoteMessageAgent,
     mockManager,
     mockSessionCtx,
     parentModel,
@@ -129,6 +131,7 @@ export const mockModules = {
   mockProjectTargetOffered: hoisted.mockProjectTargetOffered,
   mockStoreOverride: hoisted.mockStoreOverride,
   mockSessionShowCost: hoisted.mockSessionShowCost,
+  promoteMessageAgent: hoisted.promoteMessageAgent,
   mockManager: hoisted.mockManager,
   mockSessionCtx: hoisted.mockSessionCtx,
   mockPiExec: hoisted.mockPiExec,
@@ -154,6 +157,7 @@ export function resetConfig(): void {
   mockModules.mockProjectTargetOffered = false;
   mockModules.mockStoreOverride = null;
   mockModules.mockSessionShowCost = undefined;
+  mockModules.promoteMessageAgent.enabled = false;
   // The parent session's model and live level are mutated by tests that switch
   // models or follow the parent; both return to the default here so a later
   // test cannot read a model or level an earlier test installed.
@@ -676,10 +680,11 @@ vi.mock("../src/shell.js", async () => {
           ...(intent.signal !== undefined ? { signal: intent.signal } : {}),
         });
         const record = mockModules.mockManager.getRecord(id);
-        if (!intent.runInBackground && record?.execution?.promise) {
+        const isBackground = intent.runInBackground || mockModules.promoteMessageAgent.enabled;
+        if (!isBackground && record?.execution?.promise) {
           await record.execution.promise;
         }
-        return { agentId: id, record };
+        return { agentId: id, record, isBackground };
       }),
       isBackground: vi.fn(() => false),
       scheduleNudge: vi.fn(),

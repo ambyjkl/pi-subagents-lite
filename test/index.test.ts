@@ -5,11 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vite-plus/test";
-import { createMockExtensionAPI, loadExtension, shellMock, type MockExtensionAPI } from "./fixtures";
+import { createMockExtensionAPI, fakeCtx, loadExtension, shellMock, type MockExtensionAPI } from "./fixtures";
 import type { CustomToolCallEvent } from "@earendil-works/pi-coding-agent";
 import type { ResolveModelOptions } from "../src/models/model-precedence.js";
 import * as agentTypes from "../src/agents/agent-types.js";
 import { registerAgentTool } from "../src/registration.js";
+import { withSubagentParent } from "../src/agents/subagent-context.js";
 import { asExtensionAPI } from "./pi-boundaries.js";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -145,7 +146,7 @@ vi.mock("../src/ui/renderer.js", () => ({
 }));
 
 // Mutable state shared between the shell mock and tests.
-const { mutableStore, spawnGuard } = vi.hoisted(() => ({
+const { mutableStore } = vi.hoisted(() => ({
   mutableStore: {
     agent: {
       graceTurns: 6,
@@ -157,15 +158,9 @@ const { mutableStore, spawnGuard } = vi.hoisted(() => ({
     },
     modelFor: () => "anthropic/claude-sonnet-4-6",
   },
-  spawnGuard: { depth: 0 },
 }));
 
-vi.mock("../src/shell.js", () =>
-  shellMock({
-    store: mutableStore,
-    spawnGuard,
-  }),
-);
+vi.mock("../src/shell.js", () => shellMock({ store: mutableStore }));
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
@@ -217,12 +212,12 @@ describe("Agent tool schema — minimal", () => {
     expect(agentTool()!.promptGuidelines).toBeUndefined();
   });
 
-  it("exposes exactly the documented param set, each without a description", () => {
+  it("documents automatic backgrounding when MessageAgent is active", () => {
     const props = agentTool()!.parameters.properties as Record<string, SchemaJson>;
     expect(Object.keys(props).sort()).toEqual(["agent", "description", "prompt", "run_in_background", "worktree_path"]);
-    // Params carry no description: the model learns them from the tool name alone.
     expect(props.prompt.description).toBeUndefined();
     expect(props.worktree_path.description).toBeUndefined();
+    expect(props.run_in_background.description).toContain("active MessageAgent tools force this on");
     expect(props.worktree_path.type).toBe("string");
   });
 });
@@ -263,11 +258,10 @@ describe("Agent tool agent param — exposeDescriptions", () => {
         "general-purpose: General-purpose agent for complex, multi-step tasks\n" +
         "Explore: Fast codebase exploration agent (read-only)",
     );
-    // Only the agent param changes: no other param gains a description and
-    // the tool-level description stays the dot (strict-gateway contract).
+    // The agent param is retooled while the background behavior remains documented.
     expect(props.prompt!.description).toBeUndefined();
     expect(props.description!.description).toBeUndefined();
-    expect(props.run_in_background!.description).toBeUndefined();
+    expect(props.run_in_background!.description).toContain("active MessageAgent tools force this on");
     expect(props.worktree_path!.description).toBeUndefined();
     expect(retooled.description).toBe(".");
   });
@@ -417,59 +411,36 @@ describe("event listener registration", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  Subagent spawn guard (prevents shell clobbering)                  */
+/* ------------------------------------------------------------------ */
+/*  Child extension registration                                       */
 /* ------------------------------------------------------------------ */
 
-describe("subagent spawn guard", () => {
-  beforeEach(() => {
-    // Defensive: start every test from a clean depth.
-    while (spawnGuard.depth > 0) spawnGuard.depth--;
-  });
-
-  it("registers tools and listeners for the parent session", async () => {
+describe("child extension registration", () => {
+  it("registers only communication tools inside the scoped child context", async () => {
     const api = createMockExtensionAPI();
-    await loadExtension(api.api);
+    const parent = { pi: asExtensionAPI(api.api), ctx: fakeCtx(), agentStatusLimit: 8 };
 
-    expect(api.tools.length).toBeGreaterThan(0);
-    expect(api.listeners.some((l) => l.event === "session_start")).toBe(true);
-    expect(api.listeners.some((l) => l.event === "session_shutdown")).toBe(true);
+    await withSubagentParent(parent, () => loadExtension(api.api));
+
+    expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
+    expect(findTool(api, "MessageAgent")!.parameters.required).toEqual(["message"]);
+    expect(findTool(api, "MessageAgent")!.constrainedSampling).toBeUndefined();
+    expect(api.listeners).toHaveLength(0);
+    expect(api.commands).toHaveLength(0);
+    expect(api.messageRenderers).toHaveLength(0);
   });
 
-  it("registers only communication tools when loaded inside a subagent spawn", async () => {
-    spawnGuard.depth++;
-    try {
-      const api = createMockExtensionAPI();
-      await loadExtension(api.api);
+  it("does not leak child registration into the later parent extension load", async () => {
+    const childApi = createMockExtensionAPI();
+    await withSubagentParent({ pi: asExtensionAPI(childApi.api), ctx: fakeCtx(), agentStatusLimit: 8 }, () =>
+      loadExtension(childApi.api),
+    );
 
-      expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
-      expect(findTool(api, "MessageAgent")!.parameters.required).toEqual(["message"]);
-      expect(findTool(api, "MessageAgent")!.constrainedSampling).toBeUndefined();
-      // No parent lifecycle handlers; only the tool-aware prompt guidance hook.
-      expect(api.listeners.map((l) => l.event)).toEqual(["before_agent_start"]);
-      expect(api.commands).toHaveLength(0);
-      expect(api.messageRenderers).toHaveLength(0);
-    } finally {
-      spawnGuard.depth--;
-    }
-    expect(spawnGuard.depth).toBe(0);
-  });
+    const parentApi = createMockExtensionAPI();
+    await loadExtension(parentApi.api);
 
-  it("registers communication tools for nested spawns and recovers when depth returns to 0", async () => {
-    spawnGuard.depth++;
-    spawnGuard.depth++; // nested
-    try {
-      const api = createMockExtensionAPI();
-      await loadExtension(api.api);
-      expect(api.tools.map((tool) => tool.name)).toEqual(["MessageAgent", "AgentStatus"]);
-    } finally {
-      spawnGuard.depth--;
-      spawnGuard.depth--;
-    }
-
-    // Parent load works again once no subagent is in flight
-    const api = createMockExtensionAPI();
-    await loadExtension(api.api);
-    expect(api.tools.length).toBeGreaterThan(0);
+    expect(parentApi.tools.map((tool) => tool.name)).toContain("Agent");
+    expect(parentApi.listeners.some((listener) => listener.event === "session_start")).toBe(true);
   });
 });
 

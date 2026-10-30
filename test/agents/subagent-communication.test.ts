@@ -11,26 +11,32 @@ import { Check } from "typebox/value";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentManager } from "../../src/agents/agent-manager.js";
 import { makeAgentRecord, fakeCtx, shellMock } from "../fixtures.js";
 import { asAgentSession, asExtensionAPI } from "../pi-boundaries.js";
-import { COMMUNICATION_GUIDANCE } from "../../src/prompt/prompts.js";
+import { withSubagentParent, type SubagentParentContext } from "../../src/agents/subagent-context.js";
 
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn<ExtensionAPI["sendMessage"]>(),
   isIdle: vi.fn(() => false),
-  steer: vi.fn<(id: string, message: string) => Promise<boolean>>(),
-  listAgents: vi.fn(),
-  matchAgents: vi.fn(),
-  spawnGuard: { depth: 1 },
+  steer: vi.fn<AgentManager["steer"]>(),
+  getRecord: vi.fn<AgentManager["getRecord"]>(),
+  promoteToBackground: vi.fn(),
+  listAgents: vi.fn<AgentManager["listAgents"]>(),
+  matchAgents: vi.fn<AgentManager["matchAgents"]>(),
 }));
 
 vi.mock("../../src/shell.js", () =>
   shellMock({
     pi: { sendMessage: mocks.sendMessage },
     sessionCtx: { isIdle: mocks.isIdle },
-    manager: { steer: mocks.steer, listAgents: mocks.listAgents, matchAgents: mocks.matchAgents },
+    manager: {
+      steer: mocks.steer,
+      getRecord: mocks.getRecord,
+      listAgents: mocks.listAgents,
+      matchAgents: mocks.matchAgents,
+    },
     store: { agent: { agentStatusLimit: 8 } },
-    spawnGuard: mocks.spawnGuard,
   }),
 );
 
@@ -38,12 +44,8 @@ import extension from "../../src/index.js";
 import { getPiInstance, getSessionCtx, setPiInstance, setSessionCtx } from "../../src/shell.js";
 
 const registerTool = vi.fn<ExtensionAPI["registerTool"]>();
-interface StartEvent {
-  systemPromptOptions: { sections: Record<string, string> };
-}
-const on = vi.fn<(event: string, handler: (event: StartEvent) => void) => void>();
-const getActiveTools = vi.fn<ExtensionAPI["getActiveTools"]>();
-const child = asExtensionAPI({ registerTool, on, getActiveTools });
+const child = asExtensionAPI({ registerTool });
+let childParent: SubagentParentContext;
 const senderCtx: ExtensionToolContext = {
   ...fakeCtx(),
   tools: [],
@@ -60,14 +62,32 @@ function message(params: Record<string, unknown>) {
   return tool("MessageAgent").execute("call-1", params, undefined, undefined, senderCtx);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.isIdle.mockReturnValue(false);
   mocks.steer.mockResolvedValue(true);
+  mocks.getRecord.mockReturnValue(undefined);
+  mocks.promoteToBackground.mockReset();
   mocks.listAgents.mockReturnValue([]);
-  setPiInstance(asExtensionAPI({ sendMessage: mocks.sendMessage }));
-  setSessionCtx(fakeCtx({ isIdle: mocks.isIdle }));
-  extension(child);
+  mocks.matchAgents.mockReturnValue([]);
+  const parentPi = asExtensionAPI({ sendMessage: mocks.sendMessage });
+  const parentCtx = fakeCtx({ isIdle: mocks.isIdle });
+  setPiInstance(parentPi);
+  setSessionCtx(parentCtx);
+  childParent = {
+    pi: parentPi,
+    ctx: parentCtx,
+    manager: {
+      getRecord: mocks.getRecord,
+      listAgents: mocks.listAgents,
+      matchAgents: mocks.matchAgents,
+      steer: mocks.steer,
+    },
+    agentId: "97a7e0e6-4000-400",
+    agentStatusLimit: 8,
+    onBackgroundPromotion: mocks.promoteToBackground,
+  };
+  await withSubagentParent(childParent, () => extension(child));
 });
 
 describe("subagent communication tools", () => {
@@ -97,8 +117,9 @@ describe("subagent communication tools", () => {
       },
       { deliverAs: "steer", triggerTurn: true },
     );
-    expect(result.content).toEqual([{ type: "text", text: "Sent to parent" }]);
+    expect(result.content).toEqual([{ type: "text", text: "Submitted to parent; delivery is not acknowledged" }]);
     expect(mocks.steer).not.toHaveBeenCalled();
+    expect(mocks.promoteToBackground).toHaveBeenCalledOnce();
   });
 
   it("persists the originating agent identity and task description for rendering", async () => {
@@ -113,11 +134,10 @@ describe("subagent communication tools", () => {
         }),
       },
     });
-    mocks.listAgents.mockReturnValue([record]);
+    mocks.getRecord.mockReturnValue(record);
     await message({ message: "Lorem ipsum" });
     expect(mocks.sendMessage.mock.calls[0]?.[0].details).toMatchObject({
       sender: "test-session",
-      agentId: record.id,
       type: record.display.type,
       description: record.display.description,
       modelName: "Test Model",
@@ -190,21 +210,33 @@ describe("subagent communication tools", () => {
     });
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     try {
-      await resourceLoader.reload();
-      ({ session } = await createAgentSession({
-        cwd,
-        agentDir: cwd,
-        settingsManager,
-        sessionManager: SessionManager.inMemory(cwd),
-        resourceLoader,
-      }));
-      await session.bindExtensions({});
-      expect(session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "MessageAgent", "AgentStatus"]);
-      expect(session.getCallableToolNames()).toEqual(expect.arrayContaining(["MessageAgent", "AgentStatus"]));
-      expect(session.getAllTools().map((tool) => tool.name)).not.toContain("Agent");
-      expect(session.getAllTools().map((tool) => tool.name)).not.toContain("StopAgent");
+      await withSubagentParent(childParent, async () => {
+        await resourceLoader.reload();
+        ({ session } = await createAgentSession({
+          cwd,
+          agentDir: cwd,
+          settingsManager,
+          sessionManager: SessionManager.inMemory(cwd),
+          resourceLoader,
+        }));
+        await session.bindExtensions({});
+      });
+      const activeSession = session;
+      if (!activeSession) throw new Error("Child session was not created");
+      expect(activeSession.getActiveToolNames()).toEqual([
+        "read",
+        "bash",
+        "edit",
+        "write",
+        "MessageAgent",
+        "AgentStatus",
+      ]);
+      expect(activeSession.getCallableToolNames()).toEqual(expect.arrayContaining(["MessageAgent", "AgentStatus"]));
+      expect(activeSession.getAllTools().map((tool) => tool.name)).not.toContain("Agent");
+      expect(activeSession.getAllTools().map((tool) => tool.name)).not.toContain("StopAgent");
 
-      const messageTool = session.agent.state.tools.find((tool) => tool.name === "MessageAgent")!;
+      const messageTool = activeSession.agent.state.tools.find((tool) => tool.name === "MessageAgent")!;
+      expect(messageTool.description).toContain("Omit agent_id or pass null to message the parent");
       expect(Check(messageTool.parameters, { message: "Help" })).toBe(true);
       expect(Check(messageTool.parameters, { agent_id: null, message: "Help" })).toBe(true);
       expect(Check(messageTool.parameters, { agent_id: "abc123de", message: "Help" })).toBe(true);
@@ -212,7 +244,7 @@ describe("subagent communication tools", () => {
       await messageTool.execute("real-call", { message: "Help" });
       expect(mocks.sendMessage).toHaveBeenCalledOnce();
 
-      const statusTool = session.agent.state.tools.find((tool) => tool.name === "AgentStatus")!;
+      const statusTool = activeSession.agent.state.tools.find((tool) => tool.name === "AgentStatus")!;
       const result = await statusTool.execute("real-status", {});
       expect(result.content).toEqual([
         {
@@ -226,50 +258,13 @@ describe("subagent communication tools", () => {
     }
   });
 
-  describe("delivery guidance", () => {
-    function startHandler() {
-      const call = on.mock.calls.find(([event]) => event === "before_agent_start");
-      if (!call) throw new Error("before_agent_start not registered");
-      return call[1];
-    }
-
-    function run(sections: Record<string, string> = {}) {
-      const event = { systemPromptOptions: { sections: { ...sections } } };
-      startHandler()(event);
-      return event.systemPromptOptions.sections;
-    }
-
-    it("adds guidance as a trailing prompt section while MessageAgent is active", () => {
-      getActiveTools.mockReturnValue(["read", "MessageAgent"]);
-      expect(run({ existing_extension: "Existing extension section" })).toEqual({
-        existing_extension: "Existing extension section",
-        subagent_communication: COMMUNICATION_GUIDANCE,
-      });
-      expect(run()).toEqual({ subagent_communication: COMMUNICATION_GUIDANCE });
-    });
-
-    it("omits guidance when tool selection deactivates MessageAgent", () => {
-      getActiveTools.mockReturnValue(["read", "AgentStatus"]);
-      expect(run({ existing_extension: "Existing extension section" })).toEqual({
-        existing_extension: "Existing extension section",
-      });
-    });
-
-    it("does not register a prompt hook outside subagents", () => {
-      mocks.spawnGuard.depth = 0;
-      on.mockClear();
-      extension(
-        asExtensionAPI({
-          registerTool,
-          on,
-          getActiveTools,
-          registerCommand: vi.fn(),
-          registerMessageRenderer: vi.fn(),
-        }),
-      );
-      mocks.spawnGuard.depth = 1;
-      expect(on.mock.calls.map(([event]) => event)).not.toContain("before_agent_start");
-    });
+  it("explains recipient routing and message discipline in the child-visible tool definition", () => {
+    const description = tool("MessageAgent").description;
+    expect(description).toContain("Using this tool ensures the child runs in the background");
+    expect(description).toContain("Omit agent_id or pass null to message the parent");
+    expect(description).toContain("provide an ID to message another managed agent");
+    expect(description).toContain("Final responses, including blockers and questions, are delivered automatically");
+    expect(description).toContain("Do not send routine progress");
   });
 
   it("lists the parent's managed agents without promising child completion notifications", async () => {

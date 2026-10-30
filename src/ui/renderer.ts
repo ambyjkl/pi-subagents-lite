@@ -228,35 +228,24 @@ export function renderSubagentMessage(
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join("\n");
-  const header = text.match(/^\[Subagent "([^\n]*)" message\]\r?\n\r?\n/);
-  const sender = message.details?.sender ?? header?.[1];
-  const agentId = message.details?.agentId ?? sender?.match(/#([^#]+)$/)?.[1];
-  // Older entries have only the textual sender header. Resolve their task
-  // when still retained; new entries persist it so history survives clearing.
-  const matches =
-    agentId && (!message.details?.description || (!message.details?.modelName && !message.details?.modelId))
-      ? (getManager()?.matchAgents(agentId) ?? [])
-      : [];
-  const record = matches.length === 1 ? matches[0] : undefined;
-  const type = message.details?.type ?? record?.display.type ?? sender?.split("#")[0] ?? "";
-  const description = message.details?.description ?? record?.display.description ?? sender ?? "";
-  const label = `Message from ${getDisplayName(type) || "Agent"}`;
+  const sender = message.details?.sender;
+  const header = sender ? `[Subagent "${sender}" message]\n\n` : "";
+  const type = message.details?.type ?? "";
+  const description = message.details?.description ?? sender ?? "";
+  const name = getDisplayName(type, type || "Agent");
+  const label = `Message from ${name || "Agent"}`;
+
   const title = `${statusIcon("running", theme, type)} ${theme.fg("accent", theme.bold(label))}`;
   const tag = modelTag(
     {
-      modelName:
-        message.details?.modelName ?? record?.execution.session?.model?.name ?? record?.display.invocation?.modelName,
-      modelId:
-        message.details?.modelId ?? record?.execution.session?.model?.id ?? record?.display.invocation?.modelName,
-      thinkingLevel:
-        message.details?.thinkingLevel ??
-        record?.execution.session?.thinkingLevel ??
-        record?.display.invocation?.thinkingLevel,
+      modelName: message.details?.modelName,
+      modelId: message.details?.modelId,
+      thinkingLevel: message.details?.thinkingLevel,
     },
     theme,
     modelDisplayStyle,
   );
-  const body = header ? text.slice(header[0].length) : text;
+  const body = header && text.startsWith(header) ? text.slice(header.length) : text;
   const stats = message.details?.turnCount != null ? buildStatsLine(message.details, theme, showCost) : "";
   const metadata = [tag && theme.fg("dim", tag), stats].filter(Boolean).join("·");
   const heading = [title, metadata && `  ${metadata}`, description && `  ${theme.fg("text", description)}`]

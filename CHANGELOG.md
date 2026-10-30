@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Subagents can use `MessageAgent` and `AgentStatus` when the extension and tool settings permit. A subagent omitting `agent_id` (or passing `null`) messages its parent, steering a busy parent or waking an idle one; explicit IDs still address managed subagents. Parent sessions continue to require an ID.
+- Subagents can use `MessageAgent` and `AgentStatus` when the extension and tool settings permit. Omitting `agent_id` (or passing `null`) submits a parent message; explicit IDs still address managed subagents. Children with active `MessageAgent` tools are automatically backgrounded, even when foreground was requested.
 
 ### Changed
 
@@ -17,8 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Parent-directed subagent messages now render with a `Message from …` heading, model, thinking, and runtime statistics, the originating task description, and the Markdown body instead of raw sender labels. Sender metadata is persisted so the heading survives agent cleanup; older messages resolve retained agents when possible.
-- Subagent prompts now explain that final responses are delivered automatically and reserve `MessageAgent` for actionable updates while work continues. Agents that stop on a blocker or question are instructed to report it only in their final response. They explicitly prohibit routine progress, successful test reports, ready/done notices, and reworded completion summaries. The guidance is added per run only while `MessageAgent` is among the subagent's active tools, in all system prompt modes; message delivery itself is unchanged.
+- Parent-directed subagent messages render with a `Message from …` heading, model, thinking and runtime statistics, the saved task description, and a Markdown body. Saved agent types remain identifiable if a custom definition is later removed.
+- Child-only `MessageAgent` tool descriptions explain parent routing, actionable-update guidance, and automatic final-response delivery. This guidance is present only when the tool is active and does not mutate the system prompt per run.
+- Child extension setup now carries the parent capability across Pi's fresh module loads when a child uses a different cwd; children still receive only the communication tools allowed by their extension and tool settings.
+- Parent-message tool results report submission without claiming delivery, because Pi's `sendMessage` API is fire-and-forget.
 
 ## [1.17.1] - 2026-10-16
 
