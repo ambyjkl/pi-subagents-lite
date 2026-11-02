@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clicking a finished tool call in the conversation viewer expands or collapses just that call, as in pi's chat; pi's `app.tools.expand` key (or any flip of its global flag) resets every call. The `ctrl+o to expand` hint is colored like pi's.
 - The conversation viewer's expanded view shows each tool call's full command or argument instead of cutting it at 350 characters with `…`.
 - The conversation viewer shows tool results as plain text under each call: 3 lines collapsed (the last 3 for `bash`, the first 3 otherwise) with a `… (N more lines, ctrl+o to expand)` hint, everything expanded. It follows pi's global tool-output flag, and pi's `app.tools.expand` key (ctrl+o by default, honoring remaps) toggles that flag from inside the viewer, so the main chat's tool rows update too.
+- The widget's activity line shows which programs a running `bash` call has started (`running: sleep ×10, cat (12s)…`: repeats counted, first four names then `+N`, plus how long the oldest running call has gone once it passes a second) instead of just `running command…`. Linux only: it finds the call's shell through `/proc` by its `PI_SESSION_ID` and walks through subshells and wrappers like `timeout`/`env` to the program on each branch; other platforms keep `running command…`.
 
 ### Fixed
 
+- Parallel tool calls starting in the same millisecond no longer overwrite each other in the widget's active-tool list.
 - The widget's `Ctrl+o` compact-mode sync follows pi's `app.tools.expand` binding instead of a hardcoded `ctrl+o`, so a remapped key keeps it in sync.
 
 ## [1.18.0] - 2026-11-03
