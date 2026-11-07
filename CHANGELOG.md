@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every successful compaction of the main agent session (manual `/compact` or automatic) clears completed subagents, like `/agents` → Clear done, so `AgentStatus` no longer lists them. Stopped, failed and running agents are kept; subagents' own compactions don't trigger it.
 - The subagent conversation viewer shows how long each tool call ran (`Took 4.2s`) or has been running (`Elapsed 4.2s`, refreshed every second), matching pi's tool rows. Display only; nothing changes in the agent's context.
 - The conversation viewer shows a `bash` call's `timeout` as a muted `(timeout 300s)` after the command, like pi.
 - In the conversation viewer, an expanded tool call shows its `Took 2.1s` / `Elapsed …` timing as a muted line under the result, like pi, instead of on the call line.
