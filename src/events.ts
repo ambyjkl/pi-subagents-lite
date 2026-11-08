@@ -8,7 +8,7 @@ import { registerAgents, setAgentScanDirs, scanAndMerge } from "./agents/agent-t
 import { AgentManager } from "./agents/agent-manager.ts";
 import { AgentWidget, type UICtx } from "./ui/agent-widget.ts";
 import { ConversationViewer } from "./ui/conversation-viewer.ts";
-import { toolExpansionControls } from "./ui/tool-display.ts";
+import { toolExpansionControls, toolImageSettings } from "./ui/tool-display.ts";
 import { SpawnCoordinator } from "./spawn/spawn-coordinator.ts";
 import { toolCallListener } from "./agents/tool-execution.ts";
 import { invalidateAgentRow, cleanupInvalidations } from "./ui/renderer.ts";
@@ -121,6 +121,7 @@ async function openViewer(ctx: ExtensionContext, record: AgentRecord | null): Pr
         {
           getToolStartedAt: (toolCallId: string) => manager?.getToolStartedAt(record.id, toolCallId),
           ...toolExpansionControls(ctx),
+          ...toolImageSettings(ctx),
         },
       );
       viewer.setModelDisplayStyle(getStore().agent.modelDisplayStyle);
