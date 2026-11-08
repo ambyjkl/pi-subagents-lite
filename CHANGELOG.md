@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The "Subagent Result" card now expands and collapses on a left click, like tool rows, instead of only with Ctrl+O. Ctrl+O still overrides a clicked card.
 - Parallel tool calls starting in the same millisecond no longer overwrite each other in the widget's active-tool list.
 - The widget's `Ctrl+o` compact-mode sync follows pi's `app.tools.expand` binding instead of a hardcoded `ctrl+o`, so a remapped key keeps it in sync.
 
