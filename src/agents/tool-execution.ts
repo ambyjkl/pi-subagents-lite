@@ -99,7 +99,7 @@ async function resolveWorktree(
  */
 export function buildAgentDetails(
   record: AgentRecord,
-  opts?: { includeStats?: boolean; includeStatus?: boolean },
+  opts?: { includeStats?: boolean; includeStatus?: boolean; includeModel?: boolean },
 ): Record<string, unknown> {
   const details: Record<string, unknown> = {
     type: record.display.type,
@@ -133,10 +133,13 @@ export function buildAgentDetails(
     details.contextPercent = getSessionContextPercent(record.execution.session);
     details.durationMs = elapsedMs;
     details.compactions = record.stats.compactionCount;
+    details.cost = record.stats.lifetimeUsage.cost;
+  }
+
+  if (opts?.includeStats || opts?.includeModel) {
     details.modelName = record.execution.session?.model?.name ?? record.display.invocation?.modelName;
     details.modelId = record.execution.session?.model?.id ?? record.display.invocation?.modelName;
     details.thinkingLevel = record.execution.session?.thinkingLevel ?? record.display.invocation?.thinkingLevel;
-    details.cost = record.stats.lifetimeUsage.cost;
   }
 
   return details;
@@ -253,7 +256,7 @@ export async function executeAgentTool(
     const reason = !startsInBackground ? " MessageAgent is active, so it was started in the background." : "";
     const suffix = `Success! You delegated to an agent.${reason} A notification will arrive when done - USER: do not poll, don't check status and don't duplicate the delegated work!\n\nAgent ID: ${agentId}`;
     const label = record.lifecycle.status === "queued" ? "Agent queued" : "Agent running";
-    const details = buildAgentDetails(record);
+    const details = buildAgentDetails(record, { includeModel: true });
     details.agentId = agentId;
     details.status = record.lifecycle.status;
     return successResult(`[${label}] ${suffix}`, details);

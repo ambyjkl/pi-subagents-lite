@@ -185,7 +185,7 @@ export function renderAgentToolResult(
   theme: Theme,
   showCost: boolean,
   modelDisplayStyle: "id" | "name" = "id",
-  _context?: { state?: Record<string, unknown>; executionStarted?: boolean },
+  context?: { state?: Record<string, unknown>; executionStarted?: boolean; args?: Record<string, unknown> },
 ): Component {
   const { expanded } = options;
   const text = result.content[0]?.type === "text" ? (result.content[0].text ?? "") : "";
@@ -210,9 +210,24 @@ export function renderAgentToolResult(
     return rows;
   }
 
-  // Background agents — description only (icon + status are in the call line)
-  // The call renderer handles the icon and status text
-  return new Text(desc ? `  ${theme.fg("text", desc)}` : "", 0, 0);
+  // Background agents — description (icon + status are in the call line, rendered by the call renderer);
+  // expanded, also the model, the agent id and the prompt the agent was launched with.
+  const lines = desc ? [`  ${theme.fg("text", desc)}`] : [];
+  if (expanded && d) {
+    const model = [
+      resolveModelLabel(modelDisplayStyle, d.modelName as string | undefined, d.modelId as string | undefined),
+      d.thinkingLevel as string | undefined,
+    ]
+      .filter(Boolean)
+      .join(" • ");
+    if (model) lines.push(`  ${theme.fg("dim", `model: ${model}`)}`);
+    if (typeof d.agentId === "string") lines.push(`  ${theme.fg("dim", `agent id: ${d.agentId}`)}`);
+    const prompt = context?.args?.prompt;
+    if (typeof prompt === "string" && prompt.trim()) {
+      lines.push("", ...prompt.split("\n").map((l) => `  ${l}`));
+    }
+  }
+  return new Text(lines.join("\n"), 0, 0);
 }
 
 /**

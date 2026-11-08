@@ -347,6 +347,20 @@ describe("executeAgentTool — worktree_path with background spawn", () => {
     expect(result.content[0].text).toContain("running");
   });
 
+  it("reports the model with a background launch, for the card's expanded view", async () => {
+    const result = await executeAgentTool(
+      "tc-bg-model",
+      makeParams({ run_in_background: true }),
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.details).toHaveProperty("agentId");
+    expect(result.details).toHaveProperty("modelId");
+    expect(result.details).toHaveProperty("thinkingLevel");
+  });
+
   it("returns error for invalid worktree_path in background spawn", async () => {
     mockValidateWorktreePath.mockResolvedValue({
       ok: false,

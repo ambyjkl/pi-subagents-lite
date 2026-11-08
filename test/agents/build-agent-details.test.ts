@@ -97,6 +97,21 @@ describe("buildAgentDetails", () => {
     expect(details.modelName).toBeUndefined(); // no invocation set
   });
 
+  it("includeModel adds the model fields without the stats", () => {
+    const record = makeRecord({
+      display: {
+        type: "builder",
+        description: "Build something",
+        invocation: { modelName: "haiku", thinkingLevel: "high" },
+      },
+    });
+
+    const details = buildAgentDetails(record, { includeModel: true });
+
+    expect(Object.keys(details)).toEqual(["type", "description", "modelName", "modelId", "thinkingLevel"]);
+    expect(details).toMatchObject({ modelName: "haiku", modelId: "haiku", thinkingLevel: "high" });
+  });
+
   it("computes input and output from lifetimeUsage", () => {
     const record = makeRecord({
       stats: {

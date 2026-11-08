@@ -8,10 +8,10 @@ import {
   renderAgentToolCall,
   renderAgentToolResult,
   renderStatusLine,
-  renderSubagentResult,
   renderSubagentMessage,
   registerAgentInvalidation,
 } from "./ui/renderer.ts";
+import { renderSubagentResultToggleable } from "./ui/subagent-result-toggle.ts";
 import { showAgentsMainMenu } from "./ui/menu/menus.ts";
 import { getStore } from "./shell.ts";
 import type { SubagentParentContext } from "./agents/subagent-context.ts";
@@ -90,6 +90,7 @@ export function registerAgentTool(pi: ExtensionAPI): void {
         invalidate?: () => void;
         state?: Record<string, unknown>;
         executionStarted?: boolean;
+        args?: Record<string, unknown>;
       },
     ) => {
       const isError = context?.isError ?? false;
@@ -213,7 +214,7 @@ function registerCommandsAndMessages(pi: ExtensionAPI): void {
   // Message renderer — subagent-result (background agent completion)
   pi.registerMessageRenderer("subagent-result", (message, options, theme) => {
     const store = getStore();
-    return renderSubagentResult(
+    return renderSubagentResultToggleable(
       message as { content?: string; details?: Record<string, unknown> },
       options as { expanded?: boolean },
       theme,

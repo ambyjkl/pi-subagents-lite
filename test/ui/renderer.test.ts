@@ -753,6 +753,55 @@ describe("renderAgentToolResult — background agent status indicators", () => {
     },
   };
 
+  describe("expanded", () => {
+    const launched = {
+      ...backgroundResult,
+      details: {
+        ...backgroundResult.details,
+        modelName: "Sonnet",
+        modelId: "claude-sonnet-4-5",
+        thinkingLevel: "high",
+      },
+    };
+    const args = { prompt: "Fix it\nthoroughly" };
+    const lines = () =>
+      renderedRows
+        .map((r) => r.text)
+        .join("\n")
+        .split("\n");
+
+    it("adds model, agent id and the prompt under the description", () => {
+      renderAgentToolResult(launched, { expanded: true }, defaultTheme, SHOW_COST, "id", { args });
+
+      expect(lines()).toEqual([
+        "  Fix vendor approach",
+        "  model: claude-sonnet-4-5 • high",
+        "  agent id: agent-abc-123",
+        "",
+        "  Fix it",
+        "  thoroughly",
+      ]);
+    });
+
+    it("names the model by display name when configured", () => {
+      renderAgentToolResult(launched, { expanded: true }, defaultTheme, SHOW_COST, "name", { args });
+
+      expect(lines()).toContain("  model: Sonnet • high");
+    });
+
+    it("omits the model line and prompt when unknown", () => {
+      renderAgentToolResult(backgroundResult, { expanded: true }, defaultTheme, SHOW_COST, "id", {});
+
+      expect(lines()).toEqual(["  Fix vendor approach", "  agent id: agent-abc-123"]);
+    });
+
+    it("stays description-only when collapsed", () => {
+      renderAgentToolResult(launched, { expanded: false }, defaultTheme, SHOW_COST, "id", { args });
+
+      expect(lines()).toEqual(["  Fix vendor approach"]);
+    });
+  });
+
   it("shows only description when status is queued", () => {
     renderAgentToolResult(backgroundResult, { expanded: false }, defaultTheme, SHOW_COST);
 
