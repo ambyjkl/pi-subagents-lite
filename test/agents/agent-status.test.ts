@@ -69,4 +69,28 @@ describe("AgentStatus", () => {
     expect(output).not.toContain("eee55555");
     expect(result.isError).toBeUndefined();
   });
+
+  it("lists the description and worktree_path of each agent when present", async () => {
+    mockListAgents.mockReturnValue([
+      {
+        id: "aaa11111aaa11111",
+        display: { type: "builder", description: "Build the\n  parser", worktreePath: "/repo/.worktrees/parser" },
+        lifecycle: { status: "running", startedAt: 100 },
+      },
+      {
+        id: "bbb22222bbb22222",
+        display: { type: "reviewer", description: "" },
+        lifecycle: { status: "queued", startedAt: 90 },
+      },
+    ]);
+
+    const result = await executeAgentStatusTool("call", {}, undefined, undefined, asExtensionContext({}));
+
+    expect(result.content[0].text.split("\n\n")[0]).toBe(
+      [
+        "aaa11111 (builder) running, description: Build the parser, worktree_path: /repo/.worktrees/parser",
+        "bbb22222 (reviewer) queued",
+      ].join("\n"),
+    );
+  });
 });
