@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `AgentStatus` lists each agent on its own line with its `description` and, when it runs in a worktree, its `worktree_path`. `MessageAgent`'s unknown-agent report uses the same list.
 - The subagent conversation viewer shows images from tool results (a `read` of a screenshot, say) the way pi does: below the call's block after a blank row, drawn with pi-tui's own `Image`, so `terminal.images` (or the autodetected protocol), `terminal.showImages`, `terminal.imageWidthCells` and the PNG conversion for non-PNG images apply. Drawn inline on Kitty-protocol terminals only; elsewhere, or with images off, they are listed as `[Image: [image/png] 800x600]` like in pi. An image cut off by the scroll window is cropped to the visible rows.
 - Every successful compaction of the main agent session (manual `/compact` or automatic) clears completed subagents, like `/agents` → Clear done, so `AgentStatus` no longer lists them. Stopped, failed and running agents are kept; subagents' own compactions don't trigger it.
 - The subagent conversation viewer shows how long each tool call ran (`Took 4.2s`) or has been running (`Elapsed 4.2s`, refreshed every second), matching pi's tool rows. Display only; nothing changes in the agent's context.

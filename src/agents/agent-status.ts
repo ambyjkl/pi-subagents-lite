@@ -17,7 +17,11 @@ import { getManager, getStore } from "../shell.ts";
 
 function formatAgent(record: AgentRecord): string {
   const shortId = record.id.slice(0, SHORT_ID_LENGTH);
-  return `${shortId} (${record.display.type}) ${record.lifecycle.status}`;
+  const description = record.display.description?.replace(/\s+/g, " ").trim();
+  const parts = [`${shortId} (${record.display.type}) ${record.lifecycle.status}`];
+  if (description) parts.push(`description: ${description}`);
+  if (record.display.worktreePath) parts.push(`worktree_path: ${record.display.worktreePath}`);
+  return parts.join(", ");
 }
 
 /** In-progress agents are always shown; every other status is settled (issue constraints). */
@@ -52,7 +56,7 @@ export function formatAgentStatusList(agents: AgentRecord[], limit: number): str
   const shownSettled = settled.slice(0, limit);
   const hidden = settled.length - shownSettled.length;
 
-  const lines = [...active, ...shownSettled].map(formatAgent).join(", ");
+  const lines = [...active, ...shownSettled].map(formatAgent).join("\n");
   return hidden > 0 ? `${lines}\nand ${hidden} more settled agents` : lines;
 }
 
