@@ -8,6 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite-plus/test";
+
+const { mockReap } = vi.hoisted(() => ({ mockReap: vi.fn(async (_sessionId: string) => []) }));
+vi.mock("../../src/agents/process-reaper.js", () => ({ reapSessionProcesses: mockReap }));
 import { fakeCtx, fakePi, makeResolvablePromise } from "../fixtures.js";
 import {
   mockModules,
@@ -61,6 +64,45 @@ describe("AgentManager session disposal", () => {
       ...options,
     });
   }
+
+  describe("stray processes", () => {
+    const identified = (id: string) => {
+      const session = mockAgentSession();
+      (session as unknown as { sessionManager: unknown }).sessionManager = { getSessionId: () => id };
+      return session;
+    };
+
+    beforeEach(() => mockReap.mockClear());
+
+    it.each([
+      ["completed", {}],
+      ["aborted", { aborted: true }],
+      ["error", { modelError: "boom" }],
+    ])("reaps them when a run settles %s, while the session stays alive", async (_status, result) => {
+      manager = new AgentManager(onComplete);
+      const session = identified("sess-run");
+      mockModules.mockRunAgent.mockResolvedValue(mockRunResult({ session, ...result }));
+
+      const id = spawnForeground("task");
+      await manager.getRecord(id)!.execution.promise;
+      await manager.dispose();
+
+      expect(mockReap).toHaveBeenCalledWith("sess-run");
+    });
+
+    it("reaps again when the session is disposed", async () => {
+      manager = new AgentManager(onComplete);
+      mockModules.mockRunAgent.mockResolvedValue(mockRunResult({ session: identified("sess-clear") }));
+      const id = spawnForeground("task");
+      await manager.getRecord(id)!.execution.promise;
+      mockReap.mockClear();
+
+      manager.clear(id);
+      await manager.dispose();
+
+      expect(mockReap).toHaveBeenCalledWith("sess-clear");
+    });
+  });
 
   it("clear() then dispose(): teardown in order, the session disposed exactly once", async () => {
     manager = new AgentManager(onComplete);

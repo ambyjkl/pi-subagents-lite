@@ -8,7 +8,10 @@
 
 import { describe, it, expect, vi } from "vite-plus/test";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { disposeChildSession } from "../../src/agents/session-teardown.js";
+import { disposeChildSession, reapChildSessionProcesses } from "../../src/agents/session-teardown.js";
+
+const { mockReap } = vi.hoisted(() => ({ mockReap: vi.fn(async (_sessionId: string) => []) }));
+vi.mock("../../src/agents/process-reaper.js", () => ({ reapSessionProcesses: mockReap }));
 
 /** The session surface the teardown drives, asserted against the real type. */
 interface TeardownSession {
@@ -26,7 +29,44 @@ function teardownSession(overrides: Partial<TeardownSession> = {}): TeardownSess
   } as TeardownSession & AgentSession;
 }
 
+/** A session that knows its id, as the real one does. */
+function identifiedSession(id: string, overrides: Partial<TeardownSession> = {}): TeardownSession & AgentSession {
+  const session = teardownSession(overrides);
+  Object.assign(session, { sessionManager: { getSessionId: () => id } });
+  return session;
+}
+
+describe("reapChildSessionProcesses", () => {
+  it("reaps the processes of the session's id", async () => {
+    await reapChildSessionProcesses(identifiedSession("sess-1"));
+
+    expect(mockReap).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("resolves when the session has no id or the reaper throws", async () => {
+    await expect(reapChildSessionProcesses(teardownSession())).resolves.toBeUndefined();
+    mockReap.mockRejectedValueOnce(new Error("boom"));
+    await expect(reapChildSessionProcesses(identifiedSession("sess-2"))).resolves.toBeUndefined();
+  });
+});
+
 describe("disposeChildSession", () => {
+  it("reaps stray processes after the abort and before session_shutdown", async () => {
+    const session = identifiedSession("sess-3");
+    const order: string[] = [];
+    session.abort.mockImplementation(async () => void order.push("abort"));
+    mockReap.mockImplementationOnce(async () => {
+      order.push("reap");
+      return [];
+    });
+    session.extensionRunner.emit.mockImplementation(async () => void order.push("emit"));
+
+    await disposeChildSession(session);
+
+    expect(order).toEqual(["abort", "reap", "emit"]);
+    expect(mockReap).toHaveBeenCalledWith("sess-3");
+  });
+
   it("aborts, then emits session_shutdown (quit), then disposes", async () => {
     const session = teardownSession();
     const order: string[] = [];

@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { continueAgentSession, runAgent, type RunResult } from "./agent-runner.ts";
-import { disposeChildSession } from "./session-teardown.ts";
+import { disposeChildSession, reapChildSessionProcesses } from "./session-teardown.ts";
 import { AgentOutputLog } from "./output-file.ts";
 import { Watchdog } from "./watchdog.ts";
 import { getStore } from "../shell.ts";
@@ -426,6 +426,9 @@ export class AgentManager {
         // stopped mid-setup): nobody else will dispose the session it created.
         if (!this.agents.has(record.id)) this.releaseSession(record);
 
+        // The run is over: whatever its bash calls left running goes with it.
+        this.reapStrayProcesses(record);
+
         this.tallyCompletion(record);
         this.drainQueue();
         // Detach before opening the gate so an abort racing settlement cannot
@@ -728,6 +731,15 @@ export class AgentManager {
     // await never dangles, then drop the resolver. A later .finally resolve no-ops.
     this.openGate(id, "");
     this.agents.delete(id);
+  }
+
+  /** Stop the processes left behind by the record's session, tracked so dispose() waits for it. */
+  private reapStrayProcesses(record: AgentRecord): void {
+    const session = record.execution.session;
+    if (!session) return;
+    const done = reapChildSessionProcesses(session);
+    this.pendingDisposals.add(done);
+    void done.then(() => this.pendingDisposals.delete(done));
   }
 
   /**

@@ -36,7 +36,7 @@ const SHELL_NAMES = new Set(["bash", "sh", "dash", "ash", "zsh", "ksh", "mksh", 
 const WRAPPER_NAMES = new Set(["timeout", "env", "nice", "nohup", "stdbuf", "setsid", "ionice", "tokf", "rtk"]);
 
 /** argv0 basename from raw /proc/<pid>/cmdline contents; a leading "-" (login shell) is dropped. Empty for zombies. */
-function parseProgramName(cmdline: string): string {
+export function parseProgramName(cmdline: string): string {
   const argv0 = cmdline.split("\0")[0] ?? "";
   return basename(argv0).replace(/^-/, "");
 }

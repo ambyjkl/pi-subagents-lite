@@ -46,6 +46,8 @@ The `/agents` menu covers active and settled agents (view, steer or continue, st
 
 Subagents receive `MessageAgent` and `AgentStatus` when this extension is loaded in their sessions, subject to their tool settings. Their active `MessageAgent` tool description explains parent routing and message discipline. They can list and message other managed subagents, but cannot spawn or stop agents. Parent-directed messages are submitted as steering input to a busy parent or as a follow-up for an idle parent; the child acknowledgement does not guarantee delivery. In the UI, messages show a `Message from …` heading with the model, thinking level, runtime statistics, and saved task description. Completion notifications still go only to the parent. If `MessageAgent` is active, the child is automatically backgrounded so the parent can handle its messages while it works; this overrides `run_in_background: false`.
 
+When a subagent's run ends, and again when its session is disposed, processes its `bash` calls left running (`server &`, `nohup x &`, `setsid x`) are stopped: SIGTERM, then SIGKILL after 1.5 s. They are found by the `PI_SESSION_ID` in their environment, so a process that clears its environment or belongs to another user is not found. Linux and macOS/BSD only; Windows is not covered. A continued agent starts with none of the previous run's background processes.
+
 Foreground agents keep the `Agent` tool call open until they finish and are stopped by the parent's interrupt. Background agents return immediately and do not inherit that interrupt, but can still be steered or stopped through the UI or tools.
 
 ### Steering and continuation
