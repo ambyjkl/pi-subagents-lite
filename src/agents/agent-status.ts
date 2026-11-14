@@ -19,6 +19,10 @@ function formatAgent(record: AgentRecord): string {
   const shortId = record.id.slice(0, SHORT_ID_LENGTH);
   const description = record.display.description?.replace(/\s+/g, " ").trim();
   const parts = [`${shortId} (${record.display.type}) ${record.lifecycle.status}`];
+  // The agent finished once and the user restarted it: any earlier "completed" report is not final.
+  if (record.lifecycle.status === "running" && record.lifecycle.resumedBy === "user") {
+    parts.push("resumed by the user (earlier completed report is stale)");
+  }
   if (description) parts.push(`description: ${description}`);
   if (record.display.worktreePath) parts.push(`worktree_path: ${record.display.worktreePath}`);
   return parts.join(", ");

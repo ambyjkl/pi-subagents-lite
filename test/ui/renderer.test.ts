@@ -141,6 +141,30 @@ describe("renderSubagentResult — completion visibility", () => {
   );
 });
 
+describe("renderSubagentResult — resumed by the user", () => {
+  const render = (details: Record<string, unknown>) => {
+    renderSubagentResult(
+      { content: "x", details: { type: "builder", description: "Build", turnCount: 3, ...details } },
+      { expanded: false },
+      defaultTheme,
+      SHOW_COST,
+    );
+    return renderedRows.map((r) => r.text).join("\n");
+  };
+
+  it("says the earlier report is superseded when the resume notice shows a running agent", () => {
+    expect(render({ status: "running", resumedByUser: true })).toMatch(/resumed by you.*superseded/);
+  });
+
+  it("says the new report supersedes the earlier one on the resumed run's completion", () => {
+    expect(render({ status: "completed", resumedByUser: true })).toMatch(/resumed by you.*supersedes/);
+  });
+
+  it("adds nothing for an ordinary completion", () => {
+    expect(render({ status: "completed" })).not.toContain("resumed");
+  });
+});
+
 describe("renderSubagentResult — worktree path display", () => {
   it("shows worktree path in details pane for a completed agent with stats", () => {
     const message = {

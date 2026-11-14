@@ -343,6 +343,14 @@ export function renderSubagentResult(
     if (pathLines) {
       inner.addChild(new Text(pathLines, 0, 0));
     }
+    if (d.resumedByUser === true) {
+      // Mirrors what the main agent was told, so the user sees why a "completed" row went back to running.
+      const note =
+        d.status === "running"
+          ? "resumed by you — the earlier completed report is superseded"
+          : "resumed by you — supersedes the earlier completed report";
+      inner.addChild(new Text(`  ${theme.fg("dim", note)}`, 0, 0));
+    }
 
     if (expanded && text) {
       inner.addChild(new Spacer(1));

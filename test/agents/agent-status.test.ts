@@ -70,6 +70,36 @@ describe("AgentStatus", () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it("flags a running agent the user resumed after it completed, so its earlier report reads as stale", async () => {
+    mockListAgents.mockReturnValue([
+      {
+        id: "aaa11111aaa11111",
+        display: { type: "builder" },
+        lifecycle: { status: "running", startedAt: 100, resumedBy: "user" },
+      },
+      {
+        id: "bbb22222bbb22222",
+        display: { type: "builder" },
+        lifecycle: { status: "running", startedAt: 90, resumedBy: "agent" },
+      },
+      { id: "ccc33333ccc33333", display: { type: "builder" }, lifecycle: { status: "running", startedAt: 80 } },
+      {
+        id: "ddd44444ddd44444",
+        display: { type: "builder" },
+        lifecycle: { status: "completed", startedAt: 70, completedAt: 95, resumedBy: "user" },
+      },
+    ]);
+
+    const result = await executeAgentStatusTool("call", {}, undefined, undefined, asExtensionContext({}));
+    const lines = result.content[0].text.split("\n");
+
+    expect(lines.find((l: string) => l.startsWith("aaa11111"))).toContain("resumed by the user");
+    expect(lines.find((l: string) => l.startsWith("bbb22222"))).not.toContain("resumed");
+    expect(lines.find((l: string) => l.startsWith("ccc33333"))).not.toContain("resumed");
+    // Once it completed again its new report is current.
+    expect(lines.find((l: string) => l.startsWith("ddd44444"))).not.toContain("resumed");
+  });
+
   it("lists the description and worktree_path of each agent when present", async () => {
     mockListAgents.mockReturnValue([
       {
