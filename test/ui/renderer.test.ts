@@ -165,6 +165,26 @@ describe("renderSubagentResult — resumed by the user", () => {
   });
 });
 
+describe("renderSubagentResult — agent awaiting input", () => {
+  const render = (details: Record<string, unknown>) => {
+    renderSubagentResult(
+      { content: "x", details: { type: "builder", description: "Build", turnCount: 3, ...details } },
+      { expanded: false },
+      defaultTheme,
+      SHOW_COST,
+    );
+    return renderedRows.map((r) => r.text).join("\n");
+  };
+
+  it("says the card is not a finished report", () => {
+    expect(render({ status: "awaiting_input" })).toContain("awaiting your input — chat mode, turn ended; not finished");
+  });
+
+  it("adds no such note to a completion", () => {
+    expect(render({ status: "completed" })).not.toContain("awaiting your input");
+  });
+});
+
 describe("renderSubagentResult — worktree path display", () => {
   it("shows worktree path in details pane for a completed agent with stats", () => {
     const message = {

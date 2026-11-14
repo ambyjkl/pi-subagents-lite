@@ -16,7 +16,7 @@ announced.
 
 Steering an agent that is still running does not split the run: pi queues the message and drains
 the queue before the run ends, so the run settles once, after the steered work. That settlement is
-no longer always `completed`: see ADR-0013, where a turn end after a user steer of a running agent
+no longer always `completed`: see ADR-0013, where a turn end of an agent the user put in chat mode
 is `awaiting_input`.
 
 ## Why not a new "awaiting input" status for a resume
@@ -27,11 +27,10 @@ and a new status would need a heuristic over the last message. The notice reache
 main agent only acts on a completion that no later user input has superseded.
 
 > **Superseded in part by ADR-0013.** The original text said the extension "cannot tell" the two
-> apart. For one case it can: when the user steered the agent while it was running, the extension
-> knows the user is mid-conversation with it, so that turn end is the new non-final
-> `awaiting_input` status rather than `completed`. That case is the one that caused the incident
-> (the main agent merged an unfinished agent's branch). The resume-of-completed behaviour above is
-> unchanged.
+> apart. For one case the user can say so: an agent in chat mode (a switch the user flips) is
+> mid-conversation with the user, so its turn end is the new non-final `awaiting_input` status
+> rather than `completed`. That case is the one that caused the incident (the main agent merged an
+> unfinished agent's branch). The resume-of-completed behaviour above is unchanged.
 
 ## Consequences
 

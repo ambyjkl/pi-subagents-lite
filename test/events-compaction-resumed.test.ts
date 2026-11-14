@@ -39,18 +39,24 @@ import { setManager } from "../src/shell.js";
 describe("session_compact with a user-resumed subagent", () => {
   let manager: AgentManager;
   let compact: () => void;
+  let shutdown: (event: unknown, ctx: unknown) => Promise<void>;
 
   beforeEach(() => {
     runAgent.mockReset();
     continueAgentSession.mockReset();
     manager = new AgentManager();
     setManager(manager);
-    const handlers = new Map<string, () => void>();
+    const handlers = new Map<string, (...args: never[]) => unknown>();
     const pi = {
-      on: (event: string, handler: () => void) => handlers.set(event, handler),
+      on: (event: string, handler: (...args: never[]) => unknown) => handlers.set(event, handler),
     };
     setupEventListeners(asExtensionAPI(pi) as ExtensionAPI);
-    compact = () => handlers.get("session_compact")!();
+    compact = () => {
+      handlers.get("session_compact")!();
+    };
+    shutdown = async (event, ctx) => {
+      await (handlers.get("session_shutdown") as typeof shutdown)(event, ctx);
+    };
   });
 
   afterEach(() => {
@@ -93,5 +99,34 @@ describe("session_compact with a user-resumed subagent", () => {
     compact();
 
     expect(manager.getRecord(id)).toBeUndefined();
+  });
+
+  it("keeps an agent awaiting input: it is not final, and the user may still answer it", async () => {
+    const run = makeResolvablePromise();
+    runAgent.mockReturnValueOnce(run.promise);
+    const id = manager.spawn(fakePi(), fakeCtx(), "general-purpose", "task", { description: "t" });
+    manager.setChatMode(id, true);
+    run.resolve(runResult());
+    await manager.getRecord(id)!.execution.promise;
+    await vi.waitFor(() => expect(manager.getRecord(id)!.lifecycle.status).toBe("awaiting_input"));
+
+    compact();
+
+    expect(manager.listAgents().map((r) => [r.id, r.lifecycle.status])).toEqual([[id, "awaiting_input"]]);
+  });
+
+  it("counts an agent awaiting input among those killed by a reload", async () => {
+    const run = makeResolvablePromise();
+    runAgent.mockReturnValueOnce(run.promise);
+    const id = manager.spawn(fakePi(), fakeCtx(), "general-purpose", "task", { description: "t" });
+    manager.setChatMode(id, true);
+    run.resolve(runResult());
+    await manager.getRecord(id)!.execution.promise;
+    await vi.waitFor(() => expect(manager.getRecord(id)!.lifecycle.status).toBe("awaiting_input"));
+    const ctx = fakeCtx();
+
+    await shutdown({}, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith("1 agent(s) killed by reload", "warning");
   });
 });

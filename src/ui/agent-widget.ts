@@ -7,6 +7,7 @@ import { getSessionCtx } from "../shell.ts";
 import type { AgentManager } from "../agents/agent-manager.ts";
 import { formatWatchdogSummary } from "../status-note.ts";
 import type { AgentRecord, AgentLifecycle } from "../types.ts";
+import { statusLabel } from "../types.ts";
 import type { Theme } from "./types.ts";
 import type { ModelThinkingPlacement } from "../config/types.ts";
 import { formatCost, getSessionContextPercent } from "../agents/usage.ts";
@@ -547,7 +548,8 @@ export class AgentWidget {
     const cutoff = Date.now() - this.finishedRetentionMinutes * MINUTE_MS;
 
     for (const a of allAgents) {
-      if (a.lifecycle.status === "running") running.push(a);
+      // An agent awaiting input is alive, not finished: it never ages out, so it rides with the running rows.
+      if (a.lifecycle.status === "running" || a.lifecycle.status === "awaiting_input") running.push(a);
       else if (a.lifecycle.status === "queued") queued.push(a);
       else if (a.lifecycle.completedAt !== undefined && a.lifecycle.completedAt >= cutoff) finished.push(a);
     }
@@ -567,6 +569,8 @@ export class AgentWidget {
     switch (lifecycle.status) {
       case "completed":
         return { icon, statusText: "" };
+      case "awaiting_input":
+        return { icon, statusText: theme.fg("warning", ` ${statusLabel(lifecycle.status)}`) };
       case "turn_limited":
         return { icon, statusText: theme.fg("warning", " (turn limit)") };
       case "stopped": {
@@ -952,6 +956,8 @@ export class AgentWidget {
     const runningBlocks: LazyRenderBlock[] = running.map((a) => ({
       height: this.getBlockHeight(a),
       render: () => {
+        // An awaiting-input row is static (no spinner, no activity line): drawn like a finished one.
+        if (a.lifecycle.status === "awaiting_input") return this.buildFinishedBlocks([a], theme, w)[0];
         this.hasAnimatedRows = true;
         return this.buildRunningBlocks([a], theme, w, frame)[0];
       },
@@ -1115,7 +1121,11 @@ export class AgentWidget {
     let totalCost = 0;
     if (this.showCost) {
       const sessionCost = this.manager.getTotalAgentCost();
-      const runningCost = running.reduce((sum, a) => sum + a.stats.lifetimeUsage.cost, 0);
+      // The session accumulator already holds what a settled run (or an awaiting agent) spent.
+      const runningCost = running.reduce(
+        (sum, a) => sum + a.stats.lifetimeUsage.cost - (a.execution.talliedCost ?? 0),
+        0,
+      );
       totalCost = sessionCost + runningCost;
     }
 

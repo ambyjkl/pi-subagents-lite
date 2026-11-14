@@ -12,25 +12,36 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentAgentManager } from "./subagent-context.ts";
 import type { AgentRecord } from "../types.ts";
-import { SHORT_ID_LENGTH } from "../types.ts";
+import { SHORT_ID_LENGTH, statusLabel } from "../types.ts";
 import { getManager, getStore } from "../shell.ts";
+
+/** Why an agent in this state is not safe to treat as done (ADR-0013). */
+const AWAITING_INPUT_HINT =
+  "in chat mode with the user, its turn ended, may hold a question or interim output; NOT finished: do not treat it as done, merge its branch or remove its worktree";
 
 function formatAgent(record: AgentRecord): string {
   const shortId = record.id.slice(0, SHORT_ID_LENGTH);
   const description = record.display.description?.replace(/\s+/g, " ").trim();
-  const parts = [`${shortId} (${record.display.type}) ${record.lifecycle.status}`];
-  // The agent finished once and the user restarted it: any earlier "completed" report is not final.
-  if (record.lifecycle.status === "running" && record.lifecycle.resumedBy === "user") {
-    parts.push("resumed by the user (earlier completed report is stale)");
+  const parts = [`${shortId} (${record.display.type}) ${statusLabel(record.lifecycle.status)}`];
+  if (record.lifecycle.status === "awaiting_input") {
+    parts.push(AWAITING_INPUT_HINT);
+  } else if (record.lifecycle.status === "running" && record.lifecycle.resumedBy === "user") {
+    // An awaiting agent the user answered never reported "completed"; one that finished and was restarted did.
+    parts.push(
+      record.lifecycle.resumedFromAwaiting
+        ? "answered by the user after it stopped for input"
+        : "resumed by the user (earlier completed report is stale)",
+    );
   }
   if (description) parts.push(`description: ${description}`);
   if (record.display.worktreePath) parts.push(`worktree_path: ${record.display.worktreePath}`);
   return parts.join(", ");
 }
 
-/** In-progress agents are always shown; every other status is settled (issue constraints). */
+/** In-progress agents are always shown (an agent awaiting input is not finished); every other status is settled. */
 function isActive(record: AgentRecord): boolean {
-  return record.lifecycle.status === "running" || record.lifecycle.status === "queued";
+  const { status } = record.lifecycle;
+  return status === "running" || status === "queued" || status === "awaiting_input";
 }
 
 /** Most recently settled first. completedAt is stamped on every terminal path

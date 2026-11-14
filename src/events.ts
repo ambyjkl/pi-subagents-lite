@@ -8,7 +8,7 @@ import { registerAgents, setAgentScanDirs, scanAndMerge } from "./agents/agent-t
 import { AgentManager } from "./agents/agent-manager.ts";
 import { AgentWidget, type UICtx } from "./ui/agent-widget.ts";
 import { ConversationViewer } from "./ui/conversation-viewer.ts";
-import { steerAsUser } from "./ui/steer-input.ts";
+import { agentViewerControls } from "./ui/steer-input.ts";
 import { viewerToolDisplay, viewerPresentation, toolImageSettings } from "./ui/tool-display.ts";
 import { SpawnCoordinator } from "./spawn/spawn-coordinator.ts";
 import { toolCallListener } from "./agents/tool-execution.ts";
@@ -119,9 +119,8 @@ async function openViewer(ctx: ExtensionContext, record: AgentRecord | null): Pr
 
     await ctx.ui.custom<void>((tui, theme, kb, done) => {
       const viewer = new ConversationViewer(tui, record.execution.session!, record, theme, done, {
-        onStop: () => manager?.abort(record.id, "user"),
+        ...agentViewerControls(ctx, manager, record),
         keybindings: kb,
-        onSteer: (msg: string) => steerAsUser(ctx, manager, record, msg),
         toolDisplay: { ...viewerToolDisplay(ctx, manager, record.id), ...toolImageSettings(ctx) },
         ...viewerPresentation(getStore()),
       });
@@ -246,7 +245,12 @@ export function setupEventListeners(pi: ExtensionAPI): void {
     const currentManager = getManager();
     if (currentManager) {
       const records = currentManager.listAgents();
-      const active = records.filter((r) => r.lifecycle.status === "running" || r.lifecycle.status === "queued");
+      const active = records.filter(
+        (r) =>
+          r.lifecycle.status === "running" ||
+          r.lifecycle.status === "queued" ||
+          r.lifecycle.status === "awaiting_input",
+      );
       if (active.length > 0 && ctx.hasUI) {
         ctx.ui.notify(`${active.length} agent(s) killed by reload`, "warning");
       }

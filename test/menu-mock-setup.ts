@@ -48,6 +48,8 @@ const hoisted = vi.hoisted(() => {
     getRecord: vi.fn(),
     abort: vi.fn(),
     steer: vi.fn(),
+    setChatMode: vi.fn(),
+    submit: vi.fn(),
     spawn: vi.fn<AgentManager["spawn"]>(() => "agent-id-123"),
     clear: vi.fn(),
   };

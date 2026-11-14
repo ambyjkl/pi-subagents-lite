@@ -343,6 +343,12 @@ export function renderSubagentResult(
     if (pathLines) {
       inner.addChild(new Text(pathLines, 0, 0));
     }
+    if (d.status === "awaiting_input") {
+      // Mirrors what the main agent was told: this card is not a finished report.
+      inner.addChild(
+        new Text(`  ${theme.fg("warning", "awaiting your input — chat mode, turn ended; not finished")}`, 0, 0),
+      );
+    }
     if (d.resumedByUser === true) {
       // Mirrors what the main agent was told, so the user sees why a "completed" row went back to running.
       const note =

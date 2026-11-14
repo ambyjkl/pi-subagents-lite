@@ -1,55 +1,84 @@
-# A user-steered agent that ends its turn is awaiting input, not completed
+# Chat mode: a turn end the user is waiting on is awaiting input, not completed
 
 The user steered a RUNNING subagent directly (conversation viewer or `/agents` menu). The subagent
 answered with text only and ended its turn. The extension read that as `completed`, sent the main
 agent a completed nudge, and the main agent acted on it as final: it merged the agent's branch and
 deleted its worktree while the agent was still talking to the user. ADR-0012 covered the user
 resuming an agent that had already completed; it did not cover this, and it said the extension
-"cannot tell" a final completion from a turn end that waits for the user. For one case it can.
+"cannot tell" a final completion from a turn end that waits for the user.
+
+The first design here inferred the answer from who steered: a user steer of a running agent made its
+next turn end `awaiting_input`. That is wrong in both directions. A steer is often a suggestion
+("use A, not B") after which the agent should finish and report; and a user who wants a conversation
+may never steer a running agent at all. No other harness infers it either. OpenHands has the agent
+call a `finish` tool, and plain text waits for the user; Gemini has `complete_task`; Claude Code and
+opencode treat every turn end as idle/completed and their subagents do not ask the user directly.
+Only the user knows which conversation this is, so the user declares it.
 
 ## Decision
 
-A turn end is `awaiting_input` instead of `completed` exactly when **the user steered the agent
-while it was running** during that run. The extension records that as a per-agent flag,
-`lifecycle.steeredByUser`, and reads it where a run is settled, in the settlement chain of
-`AgentManager` (`attachSettlementChain`). No heuristic over the last message is involved: the flag
-is set by a fact the extension observed (a `source: "user"` steer reaching a `running` record), not
-inferred.
+**Chat mode** is a per-agent switch the user flips (`c` in the conversation viewer, "Chat mode" in
+the `/agents` agent actions). It is `lifecycle.chatMode` on the record. The switch is inert: it
+changes nothing until the agent's next plain turn end, and then it decides what that turn end is.
+
+- Chat mode **on**: a plain turn end is `awaiting_input` (the agent is waiting for the user).
+- Chat mode **off** (the default): a plain turn end is `completed`, as before.
+- Aborted, model error and turn-limit outcomes keep their own status either way.
+- The flag persists across runs until the user turns it off or submits the agent. Nothing the
+  extension observes (a steer, a turn end, a stop, a continue) changes it.
+- A steer never sets it. The main agent's `MessageAgent` cannot set it and never needs to.
+- No tool is added to subagents to declare "finished": the project keeps tool count and context
+  light, and a user switch needs none.
 
 **State machine.**
 
 ```
-before   queued -> running -> completed | turn_limited | aborted | stopped | error
-                                (every plain turn end is "completed")
-
-after    queued -> running --- plain turn end ------------------------> completed
-                      |
-                      +-- user steers it while running (flag set) --+
-                                                                    v
-                                              plain turn end -> awaiting_input   (flag cleared)
-                                                                    |
-              user reply, or MessageAgent -> running (no flag, resumedFromAwaiting)
-                                              |-- plain turn end --> completed (one nudge)
-                                              |-- user steers it again --> flag set, as above
-                           StopAgent / user Stop -> stopped
+queued -> running --- plain turn end, chat mode off ------------------> completed
+             |
+             +------- plain turn end, chat mode on ------------------> awaiting_input
+                                                                          |
+   user continues (Enter) or MessageAgent -> running (resumedFromAwaiting)|
+   user Submit (s)  -> completed (chat mode cleared, one completion nudge)|
+   user Stop / StopAgent -> stopped                                       |
 ```
+
+| State    | Chat mode | Enter    | `s`                    |
+| -------- | --------- | -------- | ---------------------- |
+| running  | on or off | steer    | stop                   |
+| awaiting | on        | continue | **submit** (one press) |
+| awaiting | off       | continue | stop (two presses)     |
+
+**Submit** is how the user says "this conversation is over". It completes the agent, clears chat
+mode, appends `[DONE]` to the output file, tallies the completion, and increments the settlement
+count so the completion nudge fires for a foreground agent as well as a background one. The main
+agent then receives exactly one ordinary completion.
+
+**Steer prefix.** A pi steer is an ordinary user message to the model, indistinguishable from the
+task prompt. So that the agent knows who is talking and what to do, a steer the user sends to a
+RUNNING agent is stored once, at store time, with a one-line prefix (stored once, so the prompt
+cache is not disturbed):
+
+- chat mode off: `(Message from the user. Address it, then continue and finish your task.)`
+- chat mode on: `(Message from the user. Reply to it.)`
+
+Continuing a parked or settled agent gets no prefix (the agent has nothing in flight to resume), and
+`MessageAgent` text is untouched. The viewer strips the prefix when it shows a user message.
+This is the one change here that alters what the agent sees; every other part is UI and
+bookkeeping. Claude Code wraps mid-turn user messages similarly.
 
 Rules:
 
-1. The flag is set only by a user steer (`source: "user"`) of a record that is `running`, including
-   a steer buffered before the session exists. A `MessageAgent` steer, a resume of a settled or
-   awaiting agent, and programmatic continuation never set it. A steer that fails to deliver
-   restores the previous value.
-2. At turn end with the flag set, and only after the aborted, model error and turn-limit outcomes
-   have been decided (those keep their status), the record becomes `awaiting_input`. The flag is
-   cleared at the same moment, whatever the outcome.
-3. `awaiting_input` is **not final**. The session stays alive and resumable, the output file gets
-   an `[AWAITING INPUT]` line instead of `[DONE]` (a resume appends after it, as after `[DONE]`),
+1. At turn end, and only after the aborted, model error and turn-limit outcomes have been decided,
+   chat mode on makes the record `awaiting_input`.
+2. `awaiting_input` is **not final**. The session stays alive and resumable, the output file gets
+   an `[AWAITING INPUT]` line instead of `[DONE]` (a continue appends after it, as after `[DONE]`),
    and usage is accounted at once.
-4. Input from the user, or a `MessageAgent` message, to an awaiting agent resumes it as `running`
-   with no flag (`resumedFromAwaiting`). Its next turn end completes normally with exactly one
-   nudge. A user steer during that resumed run sets the flag again.
-5. Resuming a `completed` agent is unchanged (ADR-0012: Resume notice, superseding nudge).
+3. Input from the user, or a `MessageAgent` message, to an awaiting agent resumes it as `running`
+   (`resumedFromAwaiting`). Chat mode stays as it was, so it may park again at the next turn end.
+4. Resuming a `completed` agent is unchanged (ADR-0012: Resume notice, superseding nudge).
+5. The cost of forgetting `c`: a user who steers an agent for a progress report without chat mode
+   sees it complete, exactly as before this ADR. That keeps today's behaviour for anyone who does
+   not use the switch.
 
 ## What the main agent is told
 
@@ -83,7 +112,7 @@ Rules:
 - **StopAgent / user Stop: allowed.** An awaiting agent is stoppable (`stopped`, normal stop nudge).
   Because it was not counted as done yet, the stop counts it. It is then clearable.
 - **MessageAgent: resumes it.** As for any settled agent with a live session, the message restarts
-  it with source `agent` and no flag, so it ends `completed`.
+  it with source `agent`. Chat mode is unchanged, so it parks again if it is still on.
 - **Clear:** refused while awaiting (live work, ADR-0006). "Stop all", "Clear all" and "Clear done"
   in `/agents` skip it.
 - **Done count:** the status bar counts an awaiting agent as active, not done, until it finishes or
@@ -91,8 +120,8 @@ Rules:
 
 ## Consequences
 
-- Only a user steer of a running agent can produce the status. A subagent that asks a question on
-  its own, unsteered, still completes; that remains indistinguishable from a final answer and is
+- Only an agent in chat mode can produce the status. A subagent that asks a question on its own,
+  with chat mode off, still completes; that remains indistinguishable from a final answer and is
   reported as completed, as before.
 - Every consumer of the status enum had to be audited; the audit is recorded in the changelog and
   commit messages, and `statusLabel()` renders the raw `awaiting_input` as "awaiting input".

@@ -25,7 +25,7 @@ import {
   type SelectItem,
 } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../../types.ts";
-import { SHORT_ID_LENGTH } from "../../types.ts";
+import { SHORT_ID_LENGTH, statusLabel } from "../../types.ts";
 import { ConversationViewer } from "../conversation-viewer.ts";
 import { viewerToolDisplay, viewerPresentation, toolImageSettings } from "../tool-display.ts";
 import { getDisplayName, agentBulletPrefix, formatMs } from "../format.ts";
@@ -33,12 +33,22 @@ import { plainText } from "../sanitize.ts";
 import { SEPARATOR_ID, buildSelectListTheme, createDelegatingComponent, installSeparatorSkip } from "./helpers.ts";
 import { overlayViewportRows } from "../overlay.ts";
 import { getManager, getStore } from "../../shell.ts";
-import { steerAsUser } from "../steer-input.ts";
+import { agentViewerControls } from "../steer-input.ts";
 import type { Theme } from "../types.ts";
 
-/** Running or queued — the only non-terminal statuses (ADR-0006: active work is never cleared). */
+/** Running or queued: work in progress, what "Stop N running agents" stops. */
 function isActive(record: AgentRecord): boolean {
   return record.lifecycle.status === "running" || record.lifecycle.status === "queued";
+}
+
+/** Parked for the user's reply (ADR-0013): alive and resumable, but not running and not finished. */
+function isAwaiting(record: AgentRecord): boolean {
+  return record.lifecycle.status === "awaiting_input";
+}
+
+/** Not final (ADR-0006: live work is never cleared): active or awaiting input. */
+function isLive(record: AgentRecord): boolean {
+  return isActive(record) || isAwaiting(record);
 }
 
 async function showConversationViewer(ctx: ExtensionCommandContext, record: AgentRecord): Promise<void> {
@@ -48,9 +58,8 @@ async function showConversationViewer(ctx: ExtensionCommandContext, record: Agen
   await ctx.ui.custom<void>(
     (tui, theme, kb, done) => {
       const viewer = new ConversationViewer(tui, record.execution.session!, record, theme, done, {
-        onStop: () => manager?.abort(record.id, "user"),
+        ...agentViewerControls(ctx, manager, record),
         keybindings: kb,
-        onSteer: (msg: string) => steerAsUser(ctx, manager, record, msg),
         toolDisplay: { ...viewerToolDisplay(ctx, manager, record.id), ...toolImageSettings(ctx) },
         ...viewerPresentation(getStore()),
       });
@@ -173,6 +182,7 @@ export function buildAgentActionsList(
   const items: SelectItem[] = [];
   const shortId = record.id.slice(0, SHORT_ID_LENGTH);
   const isRunning = isActive(record);
+  const awaiting = isAwaiting(record);
   const hasSession = !!record.execution.session;
   const hasResult = !!record.result && record.result.length > 0;
   const hasError = !!record.error && record.error.length > 0;
@@ -189,8 +199,11 @@ export function buildAgentActionsList(
   if (hasError) {
     items.push({ value: "view-error", label: "View error" });
   }
-  if (isRunning) {
-    items.push({ value: "steer", label: "Steer" });
+  if (isRunning || awaiting) {
+    // An agent awaiting input is continued, not steered: the message resumes it.
+    items.push({ value: "steer", label: awaiting ? "Continue" : "Steer" });
+    items.push({ value: "chat", label: `Chat mode: ${record.lifecycle.chatMode ? "ON" : "OFF"}` });
+    if (awaiting && record.lifecycle.chatMode) items.push({ value: "submit", label: "Submit to the main agent" });
     items.push({ value: "stop", label: "Stop" });
   } else {
     items.push({ value: "clear", label: "Clear" });
@@ -224,6 +237,15 @@ export function buildAgentActionsList(
       };
       input.onEscape = () => setActive(list);
       setActive(input);
+    } else if (item.value === "chat") {
+      const enabled = !record.lifecycle.chatMode;
+      getManager()?.setChatMode(record.id, enabled);
+      ctx.ui.notify(`Chat mode ${enabled ? "ON" : "OFF"} for ${shortId}`, "info");
+      done();
+    } else if (item.value === "submit") {
+      const submitted = getManager()?.submit(record.id);
+      ctx.ui.notify(submitted ? `Submitted ${shortId}` : `Could not submit ${shortId}`, submitted ? "info" : "error");
+      onClose();
     } else if (item.value === "stop") {
       getManager()?.abort(record.id, "user");
       ctx.ui.notify(`Stopped ${shortId}`, "info");
@@ -245,7 +267,7 @@ export async function showRunningAgentsMenu(ctx: ExtensionCommandContext): Promi
     return;
   }
   const running = agents.filter(isActive);
-  const finished = agents.filter((r) => !isActive(r));
+  const finished = agents.filter((r) => !isLive(r));
   const completed = agents.filter((r) => r.lifecycle.status === "completed");
 
   await ctx.ui.custom((_tui, theme, _kb, done) => {
@@ -256,6 +278,7 @@ export async function showRunningAgentsMenu(ctx: ExtensionCommandContext): Promi
       const items: SelectItem[] = agents.map((record) => {
         // Finished runs freeze at completion; the now fallback is defensive only
         // (completedAt is stamped on every terminal path and cleared on continue).
+        // An agent awaiting input stopped working when its turn ended: its clock is frozen too.
         const active = isActive(record);
         const end = active ? now : (record.lifecycle.completedAt ?? now);
         const duration = formatMs(end - record.lifecycle.startedAt);
@@ -267,15 +290,17 @@ export async function showRunningAgentsMenu(ctx: ExtensionCommandContext): Promi
               ? "\u2713"
               : record.lifecycle.status === "queued"
                 ? "\u23F3"
-                : record.lifecycle.status === "error"
-                  ? "\u2717"
-                  : "\u2022";
+                : record.lifecycle.status === "awaiting_input"
+                  ? "\u25D0"
+                  : record.lifecycle.status === "error"
+                    ? "\u2717"
+                    : "\u2022";
         const headline = record.display.description ? record.display.description : "";
         const suffix = headline ? ` \u2014 ${headline}` : "";
         const bullet = agentBulletPrefix(record.display.type);
         return {
           value: record.id,
-          label: `${statusIcon} ${record.id.slice(0, SHORT_ID_LENGTH)}  ${bullet}${record.display.type}  ${record.lifecycle.status}  ${duration}${suffix}${ago}`,
+          label: `${statusIcon} ${record.id.slice(0, SHORT_ID_LENGTH)}  ${bullet}${record.display.type}  ${statusLabel(record.lifecycle.status)}  ${duration}${suffix}${ago}`,
         };
       });
       if (running.length > 0) {

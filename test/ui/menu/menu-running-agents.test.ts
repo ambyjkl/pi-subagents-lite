@@ -1138,3 +1138,203 @@ describe("clear actions for finished agents", () => {
     });
   });
 });
+
+describe("agent awaiting input (ADR-0013)", () => {
+  const awaiting = (overrides: RecordOverrides = {}) =>
+    makeRecord({
+      id: "agent-w",
+      lifecycle: {
+        status: "awaiting_input",
+        startedAt: Date.now() - 50000,
+        completedAt: Date.now() - 10000,
+        started: true,
+      },
+      execution: { session: makeMockSession([{ role: "user", content: "hi" }]) },
+      result: "Do you mean X or Y?",
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    selectListCalls = [];
+    vi.clearAllMocks();
+    mockModules.mockManager.listAgents.mockReset().mockReturnValue([]);
+  });
+
+  it("lists it with its own icon and label, frozen at its turn end, not as running or completed", async () => {
+    mockModules.mockManager.listAgents.mockReturnValue([awaiting()]);
+    await showRunningAgentsMenu(createMockCtx());
+
+    const label = selectListCalls[0].items[0].label;
+
+    expect(label).toContain("\u25D0 agent-w");
+    expect(label).toContain("awaiting input");
+    expect(label).not.toContain("awaiting_input");
+    expect(label).toMatch(/awaiting input {2}40s .* 10s ago$/);
+  });
+
+  it("offers View conversation, Continue, Chat mode and Stop, and no Clear", () => {
+    const list = buildAgentActionsList(
+      createMockCtx(),
+      awaiting(),
+      defaultTheme,
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    expect(selectListView(list).items).toEqual([
+      { value: "view-conversation", label: "View conversation" },
+      { value: "view-result", label: "View result" },
+      { value: "steer", label: "Continue" },
+      { value: "chat", label: "Chat mode: OFF" },
+      { value: "stop", label: "Stop" },
+    ]);
+  });
+
+  it("offers Submit to the main agent only while it is parked in chat mode", () => {
+    const parked = awaiting({
+      lifecycle: { status: "awaiting_input", startedAt: 1, completedAt: 2, started: true, chatMode: true },
+    });
+    const list = buildAgentActionsList(
+      createMockCtx(),
+      parked,
+      defaultTheme,
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    expect(selectListView(list).items.map((i) => i.value)).toEqual([
+      "view-conversation",
+      "view-result",
+      "steer",
+      "chat",
+      "submit",
+      "stop",
+    ]);
+  });
+
+  it("switches chat mode with the toggle and goes back to the list", async () => {
+    const ctx = createMockCtx();
+    const done = vi.fn();
+    const list = buildAgentActionsList(
+      ctx,
+      awaiting(),
+      defaultTheme,
+      done,
+      () => {},
+      () => {},
+    );
+
+    await list.onSelect!({ value: "chat", label: "Chat mode: OFF" });
+
+    expect(mockModules.mockManager.setChatMode).toHaveBeenCalledWith("agent-w", true);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Chat mode ON for agent-w", "info");
+    expect(done).toHaveBeenCalled();
+  });
+
+  it("switches chat mode off when it is on", async () => {
+    const parked = awaiting({
+      lifecycle: { status: "awaiting_input", startedAt: 1, completedAt: 2, started: true, chatMode: true },
+    });
+    const list = buildAgentActionsList(
+      createMockCtx(),
+      parked,
+      defaultTheme,
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    await list.onSelect!({ value: "chat", label: "Chat mode: ON" });
+
+    expect(mockModules.mockManager.setChatMode).toHaveBeenCalledWith("agent-w", false);
+  });
+
+  it("submits the parked agent and closes the menu", async () => {
+    const onClose = vi.fn();
+    mockModules.mockManager.submit.mockReturnValue(true);
+    const parked = awaiting({
+      lifecycle: { status: "awaiting_input", startedAt: 1, completedAt: 2, started: true, chatMode: true },
+    });
+    const list = buildAgentActionsList(
+      createMockCtx(),
+      parked,
+      defaultTheme,
+      () => {},
+      () => {},
+      onClose,
+    );
+
+    await list.onSelect!({ value: "submit", label: "Submit to the main agent" });
+
+    expect(mockModules.mockManager.submit).toHaveBeenCalledWith("agent-w");
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("continues as the user, which resumes it", async () => {
+    let inputComponent: Input | undefined;
+    const ctx = createMockCtx();
+    mockModules.mockManager.steer.mockResolvedValue(true);
+    const list = buildAgentActionsList(
+      ctx,
+      awaiting(),
+      defaultTheme,
+      () => {},
+      (c) => {
+        inputComponent = asInput(c);
+      },
+      () => {},
+    );
+
+    await list.onSelect!({ value: "steer", label: "Continue" });
+    await inputComponent!.onSubmit!("use X");
+
+    expect(mockModules.mockManager.steer).toHaveBeenCalledWith("agent-w", "use X", { source: "user" });
+  });
+
+  it("stops it as the user", async () => {
+    const onClose = vi.fn();
+    const list = buildAgentActionsList(
+      createMockCtx(),
+      awaiting(),
+      defaultTheme,
+      () => {},
+      () => {},
+      onClose,
+    );
+
+    await list.onSelect!({ value: "stop", label: "Stop" });
+
+    expect(mockModules.mockManager.abort).toHaveBeenCalledWith("agent-w", "user");
+  });
+
+  it("is neither stopped by 'Stop all' nor cleared by 'Clear all' / 'Clear done'", async () => {
+    mockModules.mockManager.listAgents.mockReturnValue([
+      awaiting(),
+      makeRecord({ id: "agent-r", lifecycle: { status: "running", startedAt: Date.now() - 20000 }, result: "" }),
+      makeRecord({ id: "agent-c" }),
+    ]);
+    await showRunningAgentsMenu(createMockCtx());
+    const items = selectListCalls[0].items;
+
+    expect(items.map((i) => i.label).filter((l) => /^(Stop|Clear)/.test(l))).toEqual([
+      "Stop 1 running agent(s)",
+      "Clear done",
+      "Clear all",
+    ]);
+    await selectListCalls[0].onSelect!(items.find((i) => i.value === "__stop-all")!);
+    await selectListCalls[0].onSelect!(items.find((i) => i.value === "__clear-all")!);
+    await selectListCalls[0].onSelect!(items.find((i) => i.value === "__clear-done")!);
+
+    expect(mockModules.mockManager.abort.mock.calls.map((c) => c[0])).toEqual(["agent-r"]);
+    expect(mockModules.mockManager.clear.mock.calls.map((c) => c[0])).toEqual(["agent-c", "agent-c"]);
+  });
+
+  it("shows no bulk rows when the only agent is awaiting input", async () => {
+    mockModules.mockManager.listAgents.mockReturnValue([awaiting()]);
+    await showRunningAgentsMenu(createMockCtx());
+
+    expect(selectListCalls[0].items.map((i) => i.value)).toEqual(["agent-w"]);
+  });
+});

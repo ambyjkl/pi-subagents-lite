@@ -10,6 +10,7 @@ import type { ViewerKeybindings } from "../../src/ui/viewer-keys.js";
 import { asAgentSession, asTui } from "../pi-boundaries.js";
 import { expectNoTerminalControls } from "../fixtures.js";
 import { defaultTheme } from "../mock-utils.js";
+import { userSteerText } from "../../src/agents/user-steer.js";
 
 // --- Mocks ---
 
@@ -388,6 +389,199 @@ describe("ConversationViewer", () => {
       viewer.handleInput("\r");
 
       expect(onSteer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("agent awaiting input", () => {
+    function awaitingRecord(session: ReturnType<typeof makeMockSession>) {
+      return makeMockRecord({
+        lifecycle: { status: "awaiting_input", startedAt: Date.now() - 10000, completedAt: Date.now(), started: true },
+        execution: { settled: true, settlementCount: 1, session },
+      });
+    }
+
+    it("badges the header and offers continue and stop in the footer, not steer", () => {
+      const session = makeMockSession();
+      const viewer = openViewer(session, awaitingRecord(session), { onSteer: vi.fn(), onStop: vi.fn() });
+
+      const frame = frameLines(viewer, 120);
+
+      expect(frame[1]).toContain("◐ Agent [awaiting input]  test agent");
+      const footer = frame[frame.length - 2];
+      expect(footer).toContain("Enter continue");
+      expect(footer).toContain("s stop");
+      expect(footer).not.toContain("Enter steer");
+      expect(footer).not.toContain("s submit");
+    });
+
+    it("does not badge a running agent", () => {
+      const session = makeMockSession();
+      const viewer = openViewer(session, makeMockRecord(), { onSteer: vi.fn(), onStop: vi.fn() });
+
+      expect(frameLines(viewer, 120)[1]).not.toContain("awaiting input");
+    });
+
+    it("labels the composer 'continue'", () => {
+      const session = makeMockSession();
+      const viewer = openViewer(session, awaitingRecord(session), { onSteer: vi.fn() });
+
+      viewer.handleInput("\r");
+
+      const frame = frameLines(viewer, 120);
+      expect(frame[frame.length - 2]).toContain("✎ continue");
+    });
+
+    it("submits the reply", () => {
+      const onSteer = vi.fn();
+      const session = makeMockSession();
+      const viewer = openViewer(session, awaitingRecord(session), { onSteer });
+
+      viewer.handleInput("\r");
+      viewer.handleInput("use X");
+      viewer.handleInput("\r");
+
+      expect(onSteer).toHaveBeenCalledWith("use X");
+    });
+
+    it("stops with two presses of 's' while chat mode is off", () => {
+      const onStop = vi.fn();
+      const onSubmit = vi.fn();
+      const session = makeMockSession();
+      const viewer = openViewer(session, awaitingRecord(session), { onStop, onSubmit });
+
+      viewer.handleInput("s");
+      viewer.handleInput("s");
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("chat mode", () => {
+    function parkedRecord(session: ReturnType<typeof makeMockSession>, chatMode: boolean) {
+      return makeMockRecord({
+        lifecycle: {
+          status: "awaiting_input",
+          startedAt: Date.now() - 10000,
+          completedAt: Date.now(),
+          started: true,
+          chatMode,
+        },
+        execution: { settled: true, settlementCount: 1, session },
+      });
+    }
+
+    it("shows the state in the footer and flips it with 'c' on a running agent", () => {
+      const onSetChatMode = vi.fn();
+      const session = makeMockSession();
+      const record = makeMockRecord();
+      const viewer = openViewer(session, record, { onSetChatMode, onStop: vi.fn() });
+
+      expect(frameLines(viewer, 120).at(-2)).toContain("c chat OFF");
+      viewer.handleInput("c");
+      expect(onSetChatMode).toHaveBeenLastCalledWith(true);
+
+      record.lifecycle.chatMode = true;
+      expect(frameLines(viewer, 120).at(-2)).toContain("c chat ON");
+      viewer.handleInput("c");
+      expect(onSetChatMode).toHaveBeenLastCalledWith(false);
+    });
+
+    it("drops the least important footer hints first when the terminal is narrow", () => {
+      const session = makeMockSession();
+      const viewer = openViewer(session, makeMockRecord(), {
+        onSteer: vi.fn(),
+        onSetChatMode: vi.fn(),
+        onStop: vi.fn(),
+      });
+
+      const footer = frameLines(viewer, 100).at(-2)!;
+      expect(footer).toContain("Enter steer");
+      expect(footer).toContain("c chat OFF");
+      expect(footer).toContain("s stop");
+      expect(footer).not.toContain("C-t thinking");
+    });
+
+    it("offers no chat key without a handler", () => {
+      const session = makeMockSession();
+      const viewer = openViewer(session, makeMockRecord(), { onStop: vi.fn() });
+
+      expect(frameLines(viewer, 120).at(-2)).not.toContain("c chat");
+      expect(() => viewer.handleInput("c")).not.toThrow();
+    });
+
+    it("keeps 's' as stop on a running agent in chat mode", () => {
+      const onStop = vi.fn();
+      const onSubmit = vi.fn();
+      const session = makeMockSession();
+      const record = makeMockRecord();
+      record.lifecycle.chatMode = true;
+      const viewer = openViewer(session, record, { onStop, onSubmit, onSetChatMode: vi.fn() });
+
+      expect(frameLines(viewer, 120).at(-2)).toContain("s stop");
+      viewer.handleInput("s");
+      viewer.handleInput("s");
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("turns 's' into submit once the agent is parked in chat mode, in one press", () => {
+      const onStop = vi.fn();
+      const onSubmit = vi.fn();
+      const session = makeMockSession();
+      const viewer = openViewer(session, parkedRecord(session, true), { onStop, onSubmit, onSetChatMode: vi.fn() });
+
+      const footer = frameLines(viewer, 120).at(-2)!;
+      expect(footer).toContain("s submit");
+      expect(footer).not.toContain("s stop");
+      viewer.handleInput("s");
+
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(onStop).not.toHaveBeenCalled();
+    });
+
+    it("turns 's' back into stop when chat mode is switched off on a parked agent", () => {
+      const onStop = vi.fn();
+      const onSubmit = vi.fn();
+      const session = makeMockSession();
+      const record = parkedRecord(session, true);
+      const viewer = openViewer(session, record, { onStop, onSubmit, onSetChatMode: vi.fn() });
+      record.lifecycle.chatMode = false;
+
+      expect(frameLines(viewer, 120).at(-2)).toContain("s stop");
+      viewer.handleInput("s");
+      viewer.handleInput("s");
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("types 'c' into the composer instead of switching the mode", () => {
+      const onSetChatMode = vi.fn();
+      const onSteer = vi.fn();
+      const session = makeMockSession();
+      const viewer = openViewer(session, makeMockRecord(), { onSetChatMode, onSteer });
+
+      viewer.handleInput("\r");
+      viewer.handleInput("c");
+      viewer.handleInput("\r");
+
+      expect(onSteer).toHaveBeenCalledWith("c");
+      expect(onSetChatMode).not.toHaveBeenCalled();
+    });
+
+    it("shows a user message without the prefix the extension added", () => {
+      const session = makeMockSession([
+        { role: "user", content: userSteerText("use A instead of B", false) },
+        { role: "user", content: userSteerText("progress report?", true) },
+      ]);
+      const viewer = openViewer(session, makeMockRecord());
+
+      const text = frameLines(viewer, 120).join("\n");
+      expect(text).toContain("use A instead of B");
+      expect(text).toContain("progress report?");
+      expect(text).not.toContain("Message from the user");
     });
   });
 

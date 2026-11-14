@@ -180,7 +180,12 @@ export async function handleRestartLastAgents(ctx: ExtensionCommandContext): Pro
   const running = new Set(
     manager
       .listAgents()
-      .filter((a) => a.lifecycle.status === "running" || a.lifecycle.status === "queued")
+      .filter(
+        (a) =>
+          a.lifecycle.status === "running" ||
+          a.lifecycle.status === "queued" ||
+          a.lifecycle.status === "awaiting_input",
+      )
       .map((a) => `${a.display.type}::${a.display.description}`),
   );
 

@@ -52,7 +52,7 @@ Foreground agents keep the `Agent` tool call open until they finish and are stop
 
 ### Steering and continuation
 
-Steer a running agent mid-task to redirect it: `Enter` in the conversation viewer, `Steer` in the `/agents` menu, or `MessageAgent` from the session agent. Settled agents (completed, turn-limited, aborted, stopped, or errored) can be continued from the conversation viewer, the `/agents` menu, or `MessageAgent`.
+Steer a running agent mid-task to redirect it: `Enter` in the conversation viewer, `Steer` in the `/agents` menu, or `MessageAgent` from the session agent. Your steer is passed to the agent with a one-line note that it comes from you. Press `c` in the conversation viewer (or use "Chat mode" in `/agents`) to talk with an agent: with chat mode on, its turn end parks it as **awaiting input** instead of completing it, and `s` then submits it to the main agent as finished. Settled agents (completed, turn-limited, aborted, stopped, or errored) can be continued from the conversation viewer, the `/agents` menu, or `MessageAgent`.
 
 ### Permission gates and other Subagent-aware extensions
 

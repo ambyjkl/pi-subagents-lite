@@ -123,4 +123,51 @@ describe("AgentStatus", () => {
       ].join("\n"),
     );
   });
+
+  it("lists an agent awaiting input as active with a hint that it is not finished", async () => {
+    mockStore.agent.agentStatusLimit = 1;
+    mockListAgents.mockReturnValue([
+      {
+        id: "aaa11111aaa11111",
+        display: { type: "builder" },
+        lifecycle: { status: "awaiting_input", startedAt: 100, completedAt: 150 },
+      },
+      {
+        id: "bbb22222bbb22222",
+        display: { type: "worker" },
+        lifecycle: { status: "completed", startedAt: 80, completedAt: 200 },
+      },
+      {
+        id: "ccc33333ccc33333",
+        display: { type: "worker" },
+        lifecycle: { status: "completed", startedAt: 70, completedAt: 190 },
+      },
+    ]);
+
+    const result = await executeAgentStatusTool("call", {}, undefined, undefined, asExtensionContext({}));
+    const output = result.content[0].text;
+
+    // Active agents are exempt from the limit; one settled agent fills it.
+    expect(output).toContain("aaa11111 (builder) awaiting input");
+    expect(output).not.toContain("awaiting_input");
+    expect(output).toMatch(/NOT finished.*do not treat it as done.*merge its branch.*remove its worktree/);
+    expect(output).toContain("bbb22222");
+    expect(output).not.toContain("ccc33333");
+    expect(output.indexOf("aaa11111")).toBeLessThan(output.indexOf("bbb22222"));
+  });
+
+  it("notes that a running agent was answered by the user after it stopped for input", async () => {
+    mockListAgents.mockReturnValue([
+      {
+        id: "aaa11111aaa11111",
+        display: { type: "builder" },
+        lifecycle: { status: "running", startedAt: 100, resumedBy: "user", resumedFromAwaiting: true },
+      },
+    ]);
+
+    const result = await executeAgentStatusTool("call", {}, undefined, undefined, asExtensionContext({}));
+
+    expect(result.content[0].text).toContain("answered by the user after it stopped for input");
+    expect(result.content[0].text).not.toContain("stale");
+  });
 });

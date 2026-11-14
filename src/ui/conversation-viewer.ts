@@ -6,6 +6,7 @@
  * Adapted for pi-subagents-lite type shapes.
  */
 
+import { stripUserSteerPrefix } from "../agents/user-steer.ts";
 import { getHideThinkingBlock } from "../pi-settings.ts";
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -22,6 +23,7 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../types.ts";
+import { statusLabel } from "../types.ts";
 import { getSessionContextPercent } from "../agents/usage.ts";
 import { extractText } from "../prompt/context.ts";
 import type { Theme } from "./types.ts";
@@ -109,6 +111,10 @@ export interface ConversationViewerOptions {
   keybindings?: ViewerKeybindings;
   /** Send a steering message to the agent. Omitted -> no compose affordance. */
   onSteer?: (message: string) => void;
+  /** Switch the agent's chat mode on or off (`c`). Omitted -> no chat affordance. */
+  onSetChatMode?: (enabled: boolean) => void;
+  /** Hand the parked agent over to the main agent as finished (`s` while awaiting input in chat mode). Omitted -> `s` stops. */
+  onSubmit?: () => void;
   /** Tool timing seeds and pi's global collapsed/expanded flag. */
   toolDisplay?: ToolDisplayOptions;
   /** Summarize runs of adjacent eligible calls, show no tool result body and omit hidden thinking. Omitted means on, as the preference does. */
@@ -299,6 +305,8 @@ export class ConversationViewer implements Component {
   private readonly ungroupedTools: ReadonlySet<string>;
   private readonly onStop?: () => void;
   private readonly onSteer?: (message: string) => void;
+  private readonly onSetChatMode?: (enabled: boolean) => void;
+  private readonly onSubmit?: () => void;
   private readonly toolDisplay: ToolDisplayOptions;
 
   constructor(
@@ -311,6 +319,8 @@ export class ConversationViewer implements Component {
   ) {
     this.onStop = options.onStop;
     this.onSteer = options.onSteer;
+    this.onSetChatMode = options.onSetChatMode;
+    this.onSubmit = options.onSubmit;
     this.toolDisplay = options.toolDisplay ?? {};
     this.thinkingVisible = !getHideThinkingBlock();
     this.compactToolCalls = options.compactToolCalls !== false;
@@ -612,10 +622,25 @@ export class ConversationViewer implements Component {
       return;
     }
 
-    // Stop/abort the agent (only while it can still be stopped). Two-press:
-    // first "s" arms, second confirms -- any other key disarms.
+    // Chat mode: whether the agent's next turn end parks it for the user (ADR-0013).
+    if (matchesKey(data, "c")) {
+      this.stopArmed = false;
+      if (this.canChat()) {
+        this.onSetChatMode?.(!this.record.lifecycle.chatMode);
+        this.tui.requestRender();
+      }
+      return;
+    }
+
+    // Parked in chat mode, "s" submits the agent as finished; otherwise it stops the agent (only
+    // while it can still be stopped). Stop is two-press: first "s" arms, second confirms -- any
+    // other key disarms.
     if (matchesKey(data, "s")) {
-      if (this.isStoppable()) {
+      if (this.canSubmit()) {
+        this.stopArmed = false;
+        this.onSubmit?.();
+        this.tui.requestRender();
+      } else if (this.isStoppable()) {
         if (this.stopArmed) {
           this.stopArmed = false;
           this.onStop?.();
@@ -749,7 +774,13 @@ export class ConversationViewer implements Component {
       ? th.fg("muted", ` @${this.record.display.worktreeLabel}`)
       : "";
     // Row 1: status icon, name, description, worktree
-    lines.push(row(`${icon} ${th.bold(name)}  ${th.fg("muted", this.record.display.description)}${worktreeTag}`));
+    // An agent parked for the user's reply says so in the header: its icon alone is easy to miss.
+    const awaitingBadge = this.isAwaiting()
+      ? ` ${th.fg("warning", `[${statusLabel(this.record.lifecycle.status)}]`)}`
+      : "";
+    lines.push(
+      row(`${icon} ${th.bold(name)}${awaitingBadge}  ${th.fg("muted", this.record.display.description)}${worktreeTag}`),
+    );
 
     // Row 2: model name + compact usage stats
     const resolvedInvocation = {
@@ -806,7 +837,12 @@ export class ConversationViewer implements Component {
       const sep = th.fg("dim", " · ");
       const actions: string[] = [];
       if (this.canSteer()) actions.push(th.fg("dim", `Enter ${steerVerb}`));
-      if (this.isStoppable()) {
+      if (this.canChat()) {
+        actions.push(this.record.lifecycle.chatMode ? th.fg("accent", "c chat ON") : th.fg("dim", "c chat OFF"));
+      }
+      if (this.canSubmit()) {
+        actions.push(th.fg("accent", "s submit"));
+      } else if (this.isStoppable()) {
         actions.push(this.stopArmed ? th.fg("error", "s again to STOP") : th.fg("dim", "s stop"));
       }
       actions.push(th.fg("dim", "C-t thinking"));
@@ -818,10 +854,16 @@ export class ConversationViewer implements Component {
       const currentLine = Math.min(visibleStart + viewportHeight, totalContentLines);
       const scrollPct = totalContentLines <= viewportHeight ? 100 : Math.round((currentLine / totalContentLines) * 100);
       const count = th.fg("dim", `(${currentLine}/${totalContentLines} · ${scrollPct}%)`);
-      const withCount = [count, ...actions].join(sep);
-      // Widest left side that still fits beside the navigation group, readout first.
+      // Widest left side that still fits beside the navigation group: the readout and every action
+      // first, then fewer trailing actions (the least important go first), the readout alone last.
       const fits = (left: string) => visibleWidth(left) + 1 + visibleWidth(footerRight) <= innerW;
-      const footerLeft = [withCount, count, actions.join(sep)].find(fits) ?? "";
+      const candidates: string[] = [];
+      for (let n = actions.length; n > 0; n--) {
+        candidates.push([count, ...actions.slice(0, n)].join(sep));
+        candidates.push(actions.slice(0, n).join(sep));
+      }
+      candidates.push(count);
+      const footerLeft = candidates.find(fits) ?? "";
 
       const footerGap = Math.max(1, innerW - visibleWidth(footerLeft) - visibleWidth(footerRight));
       lines.push(row(footerLeft + " ".repeat(footerGap) + footerRight));
@@ -855,8 +897,23 @@ export class ConversationViewer implements Component {
     return this.record.lifecycle.status === "running" || this.record.lifecycle.status === "queued";
   }
 
+  /** Stopped after a user steer and waiting for the reply (ADR-0013). */
+  private isAwaiting(): boolean {
+    return this.record.lifecycle.status === "awaiting_input";
+  }
+
   private isStoppable(): boolean {
-    return !!this.onStop && this.isActive();
+    return !!this.onStop && (this.isActive() || this.isAwaiting());
+  }
+
+  /** Chat mode can be switched on any agent whose conversation is open here. */
+  private canChat(): boolean {
+    return !!this.onSetChatMode;
+  }
+
+  /** Parked in chat mode: the user can hand the agent over to the main agent as finished. */
+  private canSubmit(): boolean {
+    return !!this.onSubmit && this.isAwaiting() && !!this.record.lifecycle.chatMode;
   }
 
   private canSteer(): boolean {
@@ -971,7 +1028,7 @@ export class ConversationViewer implements Component {
 
   private renderUserMessage(msg: any, width: number): string[] {
     const th = this.theme;
-    const text = userText(msg);
+    const text = stripUserSteerPrefix(userText(msg));
     if (!text.trim()) return [];
     const wrapped = wrapTextWithAnsi(text.trim(), width - 2);
     const inner: string[] = [];

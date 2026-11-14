@@ -90,7 +90,7 @@ export async function showSettingsMenu(ctx: ExtensionCommandContext, modelOption
 
 export async function showAgentsMainMenu(ctx: ExtensionCommandContext, modelOptions: string[]): Promise<void> {
   const items: SelectItem[] = [
-    { value: "running", label: "Running agents", description: "List running/queued agents" },
+    { value: "running", label: "Running agents", description: "List running, queued and awaiting-input agents" },
     { value: "spawn", label: "Spawn agent", description: "Manually spawn a new agent" },
     { value: "settings", label: "Settings", description: "Model, concurrency, widget, and display settings" },
     { value: "debug", label: "Debug", description: "Agent types, briefing, diagnostics" },
