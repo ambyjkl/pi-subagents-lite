@@ -27,7 +27,8 @@ vi.mock("../../src/utils.js", () => ({
 }));
 
 // Hoist mock pi so shell mock can return it
-const { mockPi, mockGetPiInstance } = vi.hoisted(() => ({
+const { mockPi, mockGetPiInstance, parentState } = vi.hoisted(() => ({
+  parentState: { idle: true },
   mockPi: {
     sendMessage: vi.fn(),
     sendUserMessage: vi.fn(),
@@ -44,7 +45,7 @@ const mockPiApi = asExtensionAPI(mockPi);
 
 vi.mock("../../src/shell.js", () => ({
   getPiInstance: () => mockGetPiInstance(),
-  getSessionCtx: () => ({ isIdle: () => true }),
+  getSessionCtx: () => ({ isIdle: () => parentState.idle }),
   getWidget: () => null,
 }));
 
@@ -1020,6 +1021,224 @@ describe("SpawnCoordinator", () => {
       expect(content).toContain("before the agent started");
       expect(content).not.toContain("output is partial");
     });
+  });
+});
+
+describe("SpawnCoordinator — a subagent the user steers directly", () => {
+  let manager: ReturnType<typeof makeMockManager>;
+  let ctx: ExtensionContext;
+  let coordinator: SpawnCoordinator;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = makeMockManager();
+    ctx = makeMockCtx();
+    mockPi.sendMessage.mockReset();
+    mockGetPiInstance.mockReturnValue(mockPiApi);
+    parentState.idle = true;
+    coordinator = new SpawnCoordinator(manager);
+  });
+
+  async function spawnBackground() {
+    const result = await coordinator.spawn(mockPiApi, ctx, {
+      type: "builder",
+      prompt: "task",
+      description: "Test",
+      graceTurns: 6,
+      runInBackground: true,
+    });
+    return result.record;
+  }
+
+  /** The agent settled and the parent was told. */
+  function settleAndAnnounce(record: AgentRecord, count: number, result = "Which branch?") {
+    record.lifecycle.status = "completed";
+    record.result = result;
+    record.execution.settlementCount = count;
+    coordinator.onAgentComplete(record);
+    vi.advanceTimersByTime(200);
+  }
+
+  /** What manager.continueSettledAgent leaves behind before it calls onResume. */
+  function resume(record: AgentRecord, by: "user" | "agent") {
+    record.lifecycle.status = "running";
+    record.lifecycle.resumedBy = by;
+    record.result = undefined;
+    coordinator.onAgentResumed(record, by);
+  }
+
+  function sentMessages() {
+    return mockPi.sendMessage.mock.calls.map(([message, options]) => ({ message, options }));
+  }
+
+  it("tells the parent a completed agent is running again, so it never acts on the stale report", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    expect(sentMessages()).toHaveLength(1);
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user");
+
+    const [{ message }] = sentMessages();
+    expect(message.customType).toBe("subagent-result");
+    expect(message.content).toContain(`[Subagent "builder" ${record.id.slice(0, 8)} resumed by the user]`);
+    expect(message.content).toMatch(/do not act on it/i);
+    expect(message.content).toMatch(/new completion notification/i);
+    expect(message.details).toMatchObject({ status: "running", resumedByUser: true, type: "builder" });
+  });
+
+  it("delivers the resume notice before the parent's next LLM call when the parent is busy", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    mockPi.sendMessage.mockClear();
+    parentState.idle = false;
+
+    resume(record, "user");
+
+    expect(sentMessages()[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+  });
+
+  it("records the resume without waking an idle parent", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user");
+
+    expect(sentMessages()[0].options).toEqual({ triggerTurn: false });
+  });
+
+  it("announces a foreground agent's inline result as told, so a later user resume is reported", async () => {
+    const result = await coordinator.spawn(mockPiApi, ctx, {
+      type: "builder",
+      prompt: "task",
+      description: "Test",
+      graceTurns: 6,
+      runInBackground: false,
+    });
+    result.record.lifecycle.status = "completed";
+    mockPi.sendMessage.mockClear();
+
+    resume(result.record, "user");
+
+    expect(sentMessages()).toHaveLength(1);
+    expect(sentMessages()[0].message.content).toContain("resumed by the user");
+  });
+
+  it("drops a completed nudge still waiting in its batch window instead of sending a stale or empty one", async () => {
+    const record = await spawnBackground();
+    record.lifecycle.status = "completed";
+    record.result = "Which branch?";
+    record.execution.settlementCount = 1;
+    coordinator.onAgentComplete(record);
+
+    resume(record, "user");
+    vi.advanceTimersByTime(200);
+
+    // Nothing was announced, so there is nothing to retract and nothing to send.
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("announces the resumed run's completion exactly once, marked as resumed by the user", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    resume(record, "user");
+    mockPi.sendMessage.mockClear();
+
+    settleAndAnnounce(record, 2, "Merged main.");
+    vi.advanceTimersByTime(1000);
+
+    const sent = sentMessages();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message.content).toContain(`[Subagent "builder" ${record.id.slice(0, 8)} completed]`);
+    expect(sent[0].message.content).toMatch(/resumed by the user.*supersedes/is);
+    expect(sent[0].message.content).toContain("Merged main.");
+    expect(sent[0].message.details).toMatchObject({ status: "completed", resumedByUser: true });
+  });
+
+  it("reports every user resume, and announces each completion once", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    resume(record, "user");
+    settleAndAnnounce(record, 2, "second");
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user");
+
+    expect(sentMessages()).toHaveLength(1);
+    settleAndAnnounce(record, 3, "third");
+    expect(sentMessages()).toHaveLength(2);
+  });
+
+  it("says nothing about a resume the main agent made itself through MessageAgent", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "agent");
+    settleAndAnnounce(record, 2, "done");
+
+    const sent = sentMessages();
+    expect(sent).toHaveLength(1); // only the completion
+    expect(sent[0].message.content).not.toMatch(/resumed by the user/i);
+    expect(sent[0].message.details).not.toHaveProperty("resumedByUser", true);
+  });
+
+  it("drops a completed nudge made stale by the main agent's own continuation", async () => {
+    const record = await spawnBackground();
+    record.lifecycle.status = "completed";
+    record.execution.settlementCount = 1;
+    coordinator.onAgentComplete(record);
+
+    resume(record, "agent");
+    vi.advanceTimersByTime(200);
+
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("sends no resume notice for an agent whose first completion was never announced", async () => {
+    const record = await spawnBackground();
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user");
+
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("does not announce a user's steer of a running agent: its single completion is the only notice", async () => {
+    const record = await spawnBackground();
+    // The user steers mid-run: the manager does not touch the run and fires no callback.
+    expect(sentMessages()).toEqual([]);
+
+    settleAndAnnounce(record, 1, "final");
+
+    expect(sentMessages()).toHaveLength(1);
+    expect(sentMessages()[0].message.content).not.toMatch(/resumed/i);
+  });
+
+  it("sends no resume notice once disposed", async () => {
+    const record = await spawnBackground();
+    settleAndAnnounce(record, 1);
+    mockPi.sendMessage.mockClear();
+    coordinator.dispose();
+
+    resume(record, "user");
+
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("falls back to ui.notify when the resume notice cannot be sent", async () => {
+    const notify = vi.fn();
+    const record = await spawnBackground();
+    record.execution.spawnCtx = asExtensionContext({ ui: { notify } });
+    settleAndAnnounce(record, 1);
+    mockPi.sendMessage.mockImplementation(() => {
+      throw new Error("stale");
+    });
+
+    resume(record, "user");
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("resumed by the user"), "info");
   });
 });
 

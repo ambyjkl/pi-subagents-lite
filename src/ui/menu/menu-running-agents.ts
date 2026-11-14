@@ -33,6 +33,7 @@ import { plainText } from "../sanitize.ts";
 import { SEPARATOR_ID, buildSelectListTheme, createDelegatingComponent, installSeparatorSkip } from "./helpers.ts";
 import { overlayViewportRows } from "../overlay.ts";
 import { getManager, getStore } from "../../shell.ts";
+import { steerAsUser } from "../steer-input.ts";
 import type { Theme } from "../types.ts";
 
 /** Running or queued — the only non-terminal statuses (ADR-0006: active work is never cleared). */
@@ -49,7 +50,7 @@ async function showConversationViewer(ctx: ExtensionCommandContext, record: Agen
       const viewer = new ConversationViewer(tui, record.execution.session!, record, theme, done, {
         onStop: () => manager?.abort(record.id, "user"),
         keybindings: kb,
-        onSteer: (msg: string) => manager?.steer(record.id, msg),
+        onSteer: (msg: string) => steerAsUser(ctx, manager, record, msg),
         toolDisplay: { ...viewerToolDisplay(ctx, manager, record.id), ...toolImageSettings(ctx) },
         ...viewerPresentation(getStore()),
       });
@@ -216,7 +217,7 @@ export function buildAgentActionsList(
       input.onSubmit = async (value) => {
         const trimmed = value.trim();
         if (trimmed) {
-          const sent = await getManager()!.steer(record.id, trimmed);
+          const sent = await getManager()!.steer(record.id, trimmed, { source: "user" });
           ctx.ui.notify(sent ? `Steer sent to ${shortId}…` : `Steer failed for ${shortId}`, sent ? "info" : "error");
         }
         setActive(list);

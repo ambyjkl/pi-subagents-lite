@@ -11,6 +11,10 @@ import { asExtensionContext } from "./pi-boundaries.js";
 
 const mockSetAgentScanDirs = vi.fn();
 const mockSetProjectDir = vi.fn();
+const wiring = vi.hoisted(() => ({
+  onResume: undefined as ((record: { id: string }, by: "user" | "agent") => void) | undefined,
+  onAgentResumed: vi.fn(),
+}));
 
 // Windows-style fixtures: the home-dir fix targets Windows, where HOME may
 // be unset and paths contain backslashes and spaces.
@@ -41,6 +45,9 @@ vi.mock("../src/agents/agent-discovery.js", () => ({
 vi.mock("../src/agents/agent-manager.js", () => ({
   AgentManager: class AgentManager {
     setOnComplete(): void {}
+    setOnResume(cb: (record: { id: string }, by: "user" | "agent") => void): void {
+      wiring.onResume = cb;
+    }
   },
 }));
 
@@ -53,7 +60,9 @@ vi.mock("../src/ui/result-viewer.js", () => ({
 }));
 
 vi.mock("../src/spawn/spawn-coordinator.js", () => ({
-  SpawnCoordinator: class SpawnCoordinator {},
+  SpawnCoordinator: class SpawnCoordinator {
+    onAgentResumed = wiring.onAgentResumed;
+  },
 }));
 
 vi.mock("../src/agents/tool-execution.js", () => ({
@@ -158,5 +167,15 @@ describe("events.ts session config loading", () => {
     await loadConfigAndRegisterAgents(ctx);
 
     expect(mockSetProjectDir).toHaveBeenCalledWith(undefined);
+  });
+
+  it("reports a settled agent resumed by the user to the spawn coordinator", async () => {
+    const ctx = asExtensionContext({ cwd: MOCK_CWD, isProjectTrusted: () => true });
+    await loadConfigAndRegisterAgents(ctx);
+
+    const record = { id: "abcdef12" };
+    wiring.onResume?.(record, "user");
+
+    expect(wiring.onAgentResumed).toHaveBeenCalledWith(record, "user");
   });
 });

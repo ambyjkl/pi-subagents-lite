@@ -77,6 +77,7 @@ vi.mock("../src/agents/agent-manager.js", () => ({
       return 0;
     }
     setOnComplete() {}
+    setOnResume() {}
     dispose() {
       return Promise.resolve();
     }

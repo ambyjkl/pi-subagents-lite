@@ -615,7 +615,7 @@ describe("buildAgentActionsList — stop/steer callback routing", () => {
     // Submit a steer message
     await capturedInput!.onSubmit!("please do this");
 
-    expect(mockModules.mockManager.steer).toHaveBeenCalledWith("test-id-123", "please do this");
+    expect(mockModules.mockManager.steer).toHaveBeenCalledWith("test-id-123", "please do this", { source: "user" });
     // After submit, should switch back to the list
     expect(setActive).toHaveBeenCalledTimes(2); // steer input + back to list
   });

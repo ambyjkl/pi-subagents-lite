@@ -8,6 +8,7 @@ import { registerAgents, setAgentScanDirs, scanAndMerge } from "./agents/agent-t
 import { AgentManager } from "./agents/agent-manager.ts";
 import { AgentWidget, type UICtx } from "./ui/agent-widget.ts";
 import { ConversationViewer } from "./ui/conversation-viewer.ts";
+import { steerAsUser } from "./ui/steer-input.ts";
 import { viewerToolDisplay, viewerPresentation, toolImageSettings } from "./ui/tool-display.ts";
 import { SpawnCoordinator } from "./spawn/spawn-coordinator.ts";
 import { toolCallListener } from "./agents/tool-execution.ts";
@@ -53,6 +54,14 @@ export function ensureManagerAndWidget(): void {
 
     newManager.setOnComplete((record) => {
       coordinator.onAgentComplete(record);
+      invalidateAgentRow(record.id);
+      getWidget()?.update();
+    });
+
+    // A settled agent running again: the parent hears about a user's resume, and the
+    // rows flip from finished to running at once instead of on the next timer tick.
+    newManager.setOnResume((record, by) => {
+      coordinator.onAgentResumed(record, by);
       invalidateAgentRow(record.id);
       getWidget()?.update();
     });
@@ -112,7 +121,7 @@ async function openViewer(ctx: ExtensionContext, record: AgentRecord | null): Pr
       const viewer = new ConversationViewer(tui, record.execution.session!, record, theme, done, {
         onStop: () => manager?.abort(record.id, "user"),
         keybindings: kb,
-        onSteer: (msg: string) => manager?.steer(record.id, msg),
+        onSteer: (msg: string) => steerAsUser(ctx, manager, record, msg),
         toolDisplay: { ...viewerToolDisplay(ctx, manager, record.id), ...toolImageSettings(ctx) },
         ...viewerPresentation(getStore()),
       });

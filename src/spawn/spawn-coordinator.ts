@@ -45,6 +45,13 @@ export interface SpawnResult {
 /** Batch delay for nudges — only emit one update per batch window (ms). */
 const NUDGE_DELAY_MS = 200;
 
+/** Body of the notice that a completed agent is running again because the user steered it directly. */
+const RESUME_NOTICE =
+  'The user answered or steered this subagent directly, so it is running again. Its earlier "completed" report is not final: do not act on it. A new completion notification will arrive when it truly finishes.';
+
+/** Opens the completion nudge of a run the user restarted, so it reads as replacing the earlier report. */
+const RESUMED_RUN_NOTE = "(Resumed by the user after an earlier report; this report supersedes it.)";
+
 // --- SpawnCoordinator ---
 
 export class SpawnCoordinator {
@@ -53,6 +60,13 @@ export class SpawnCoordinator {
 
   /** Pending nudge agent IDs, batched within the delay window. */
   private pendingNudges = new Set<string>();
+
+  /**
+   * Agents whose latest settlement the parent was told about: a delivered completion nudge, or
+   * the inline result of a foreground Agent call. Only these need a notice when the user resumes
+   * them; for any other the parent has not seen a report that could go stale.
+   */
+  private reportedToParent = new Set<string>();
 
   private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,6 +162,8 @@ export class SpawnCoordinator {
       markBackground(agentId);
     } else if (!isBackground) {
       await Promise.race([record.execution.promise, backgroundReady]);
+      // Still foreground: the tool call returns the result inline, so the parent has it.
+      if (!isBackground) this.reportedToParent.add(agentId);
     }
 
     return { agentId, record, isBackground };
@@ -197,12 +213,28 @@ export class SpawnCoordinator {
     }
   }
 
+  /**
+   * Called by AgentManager when a settled agent is prompted again (its record is already running).
+   *
+   * Any completion nudge still waiting in its batch window is stale either way and is dropped.
+   * When the user did it, directly in the subagent, the main agent cannot know: if it was told the
+   * agent completed, it is now told promptly that the report is superseded, so it never acts on it.
+   * Its next completion nudge is then marked as the resumed run's. A resume by the main agent's own
+   * MessageAgent needs no notice.
+   */
+  onAgentResumed(record: AgentRecord, by: "user" | "agent"): void {
+    this.pendingNudges.delete(record.id);
+    const wasReported = this.reportedToParent.delete(record.id);
+    if (by === "user" && wasReported) this.emitResumeNotice(record);
+  }
+
   dispose(): void {
     if (this.nudgeTimer) {
       clearTimeout(this.nudgeTimer);
       this.nudgeTimer = null;
     }
     this.pendingNudges.clear();
+    this.reportedToParent.clear();
     this.backgroundAgentIds.clear();
     this.disposed = true;
   }
@@ -249,7 +281,14 @@ export class SpawnCoordinator {
       includeStats: true,
       includeStatus: true,
     });
+    // A run the user restarted by typing into the subagent: the main agent may hold an
+    // earlier report from it, and this one replaces that.
+    const resumedByUser = record.lifecycle.resumedBy === "user";
+    if (resumedByUser) details.resumedByUser = true;
+    const body = `${resumedByUser ? `${RESUMED_RUN_NOTE}\n\n` : ""}${formatResultContent(record)}`;
+    const header = `[Subagent "${record.display.type}" ${record.id.slice(0, SHORT_ID_LENGTH)} ${record.lifecycle.status}]`;
 
+    this.reportedToParent.add(agentId);
     try {
       // Pick delivery mode based on parent session state:
       // - steer: queues while running, delivers before next LLM call
@@ -259,16 +298,8 @@ export class SpawnCoordinator {
       const deliverAs = parentIdle ? "followUp" : "steer";
 
       pi.sendMessage(
-        {
-          customType: "subagent-result",
-          content: `[Subagent "${record.display.type}" ${record.id.slice(0, SHORT_ID_LENGTH)} ${record.lifecycle.status}]\n\n${formatResultContent(record)}`,
-          details,
-          display: true,
-        },
-        {
-          deliverAs,
-          triggerTurn: true,
-        },
+        { customType: "subagent-result", content: `${header}\n\n${body}`, details, display: true },
+        { deliverAs, triggerTurn: true },
       );
     } catch {
       // sendMessage failed (shared runtime overwritten by subagent bindCore).
@@ -280,6 +311,42 @@ export class SpawnCoordinator {
         } catch {
           // ctx may also be stale if session was replaced
         }
+      }
+    }
+  }
+
+  /**
+   * Tell the parent that an agent it was told had completed is running again. A busy parent gets
+   * it ahead of its next LLM call (it may be about to act on the stale report); an idle parent
+   * just records it, so nothing wakes it until the resumed run's own completion nudge.
+   */
+  private emitResumeNotice(record: AgentRecord): void {
+    if (this.disposed) return;
+    const pi = getPiInstance();
+    if (!pi) return;
+
+    const shortId = record.id.slice(0, SHORT_ID_LENGTH);
+    const details = buildAgentDetails(record, { includeStats: true, includeStatus: true });
+    details.resumedByUser = true;
+    try {
+      const parentIdle = getSessionCtx()?.isIdle?.() ?? true;
+      pi.sendMessage(
+        {
+          customType: "subagent-result",
+          content: `[Subagent "${record.display.type}" ${shortId} resumed by the user]\n\n${RESUME_NOTICE}`,
+          details,
+          display: true,
+        },
+        parentIdle ? { triggerTurn: false } : { deliverAs: "steer", triggerTurn: true },
+      );
+    } catch {
+      try {
+        record.execution.spawnCtx?.ui?.notify(
+          `[Subagent "${record.display.type}" ${shortId} resumed by the user] Its earlier completed report is superseded`,
+          "info",
+        );
+      } catch {
+        // ctx may be stale if the session was replaced
       }
     }
   }
