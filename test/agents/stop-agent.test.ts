@@ -63,6 +63,23 @@ describe("executeStopAgentTool", () => {
     expect(result.isError).toBeFalsy();
   });
 
+  it("stops an agent awaiting input (it is alive, just parked for the user)", async () => {
+    mockMatchAgents.mockReturnValue([agent("awaiting_input")]);
+    mockAbort.mockReturnValue(true);
+
+    const result = await stop({ agent_id: ID });
+
+    expect(mockAbort).toHaveBeenCalledWith(ID, "agent");
+    expect(result.content[0].text).toBe(`Stopped agent ${SHORT_ID}`);
+  });
+
+  it("lists agents awaiting input among the stoppable ones when an id is wrong", async () => {
+    mockMatchAgents.mockReturnValue([]);
+    mockListAgents.mockReturnValue([agent("awaiting_input", "aaa111bbb222cccdd", "builder"), agent("completed")]);
+
+    await expect(stop({ agent_id: "nope" })).rejects.toThrow(/Running agents: aaa111bb \(builder\)$/);
+  });
+
   it("stops a queued agent", async () => {
     mockMatchAgents.mockReturnValue([agent("queued")]);
     mockAbort.mockReturnValue(true);

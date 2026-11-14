@@ -696,6 +696,38 @@ describe("executeAgentTool — foreground result details", () => {
   });
 });
 
+describe("executeAgentTool — foreground agent that stopped for the user's input", () => {
+  let ctx: ExtensionContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ctx = fakeCtx();
+  });
+
+  it("returns an inline result that says it is NOT finished and names the agent to answer", async () => {
+    mockGetRecord.mockReturnValue({
+      id: "agent-id-123",
+      result: "Do you mean X or Y?",
+      display: { type: "general-purpose", description: "Pick one" },
+      lifecycle: { status: "awaiting_input", startedAt: Date.now() - 1000, completedAt: Date.now(), started: true },
+      execution: { promise: Promise.resolve("Do you mean X or Y?"), settled: true, settlementCount: 1 },
+      stats: {
+        lifetimeUsage: { input: 0, output: 0, cacheWrite: 0, cost: 0 },
+        toolUses: 0,
+        compactionCount: 0,
+      },
+    });
+
+    const result = await executeAgentTool("tc-aw", makeParams(), undefined, undefined, ctx);
+
+    const text = result.content[0].text as string;
+    expect(text.startsWith("[Agent awaiting input — NOT finished] Agent ID: agent-id-123")).toBe(true);
+    expect(text).toContain("Do you mean X or Y?");
+    expect(text).toMatch(/do not treat it as complete/i);
+    expect(result.details).toMatchObject({ status: "awaiting_input", agentId: "agent-id-123" });
+  });
+});
+
 describe("formatResultContent", () => {
   function makeContentRecord(
     overrides: { result?: string; error?: string; lifecycle?: Partial<AgentLifecycle> } = {},

@@ -470,7 +470,7 @@ describe("SpawnCoordinator", () => {
       });
       expect(coordinator.liveView(result.agentId)).toBeDefined();
 
-      coordinator.onAgentComplete({ id: result.agentId } as AgentRecord);
+      coordinator.onAgentComplete(result.record);
 
       expect(coordinator.liveView(result.agentId)).toBeDefined();
     });
@@ -486,7 +486,7 @@ describe("SpawnCoordinator", () => {
         runInBackground: true,
       });
 
-      coordinator.onAgentComplete({ id: result.agentId } as AgentRecord);
+      coordinator.onAgentComplete(result.record);
 
       vi.advanceTimersByTime(200);
       expect(mockPi.sendMessage).toHaveBeenCalledTimes(1);
@@ -505,7 +505,7 @@ describe("SpawnCoordinator", () => {
       });
       const spawn = manager.getSpawnCalls()[0];
 
-      coordinator.onAgentComplete({ id: result.agentId } as AgentRecord);
+      coordinator.onAgentComplete(result.record);
 
       // Continuation activity flows through the same spawn-time callbacks
       // into the retained live view.
@@ -1239,6 +1239,212 @@ describe("SpawnCoordinator — a subagent the user steers directly", () => {
     resume(record, "user");
 
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("resumed by the user"), "info");
+  });
+});
+
+describe("SpawnCoordinator — an agent awaiting the user's input (ADR-0013)", () => {
+  let manager: ReturnType<typeof makeMockManager>;
+  let ctx: ExtensionContext;
+  let coordinator: SpawnCoordinator;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = makeMockManager();
+    ctx = makeMockCtx();
+    mockPi.sendMessage.mockReset();
+    mockGetPiInstance.mockReturnValue(mockPiApi);
+    parentState.idle = true;
+    coordinator = new SpawnCoordinator(manager);
+  });
+
+  async function spawn(runInBackground: boolean) {
+    const result = await coordinator.spawn(mockPiApi, ctx, {
+      type: "builder",
+      prompt: "task",
+      description: "Test",
+      graceTurns: 6,
+      runInBackground,
+    });
+    return result.record;
+  }
+
+  /** What the manager's settlement chain leaves behind and notifies for. */
+  function settle(record: AgentRecord, status: AgentStatus, count: number, result = "Do you mean X or Y?") {
+    record.lifecycle.status = status;
+    record.result = result;
+    record.execution.settlementCount = count;
+    coordinator.onAgentComplete(record);
+    vi.advanceTimersByTime(1000);
+  }
+
+  function resume(record: AgentRecord, by: "user" | "agent", fromAwaiting: boolean) {
+    record.lifecycle.status = "running";
+    record.lifecycle.resumedBy = by;
+    record.lifecycle.resumedFromAwaiting = fromAwaiting;
+    record.result = undefined;
+    coordinator.onAgentResumed(record, by);
+  }
+
+  function sentMessages() {
+    return mockPi.sendMessage.mock.calls.map(([message, options]) => ({ message, options }));
+  }
+
+  it("sends no completed nudge for a background agent that is awaiting input", async () => {
+    const record = await spawn(true);
+
+    settle(record, "awaiting_input", 1);
+
+    const completed = sentMessages().filter(({ message }) => /completed\]/.test(message.content));
+    expect(completed).toEqual([]);
+    expect(sentMessages().filter(({ options }) => options?.triggerTurn)).toEqual([]);
+  });
+
+  it("records one quiet, non-triggering message that says the agent is not finished", async () => {
+    const record = await spawn(true);
+
+    settle(record, "awaiting_input", 1);
+
+    const sent = sentMessages();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].options).toEqual({ triggerTurn: false });
+    expect(sent[0].message.customType).toBe("subagent-result");
+    expect(sent[0].message.display).toBe(true);
+    expect(sent[0].message.content).toContain(`[Subagent "builder" ${record.id.slice(0, 8)} awaiting input]`);
+    expect(sent[0].message.content).toMatch(/not (done|finished)/i);
+    expect(sent[0].message.content).toMatch(/worktree/i);
+    expect(sent[0].message.details).toMatchObject({ status: "awaiting_input", type: "builder" });
+  });
+
+  it("is quiet whether the parent is busy or idle (never a steer or follow-up)", async () => {
+    const record = await spawn(true);
+    parentState.idle = false;
+
+    settle(record, "awaiting_input", 1);
+
+    expect(sentMessages()[0].options).toEqual({ triggerTurn: false });
+  });
+
+  it("keeps the first-settlement nudge for the real completion after the user answers", async () => {
+    const record = await spawn(true);
+    settle(record, "awaiting_input", 1);
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user", true);
+    expect(sentMessages()).toEqual([]); // no "resumed by the user" notice: no report went stale
+
+    settle(record, "completed", 2, "Went with X.");
+
+    const sent = sentMessages();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].options).toMatchObject({ triggerTurn: true });
+    expect(sent[0].message.content).toContain(`[Subagent "builder" ${record.id.slice(0, 8)} completed]`);
+    expect(sent[0].message.content).toContain("Went with X.");
+    // There was no earlier completed report, so the nudge does not claim to supersede one.
+    expect(sent[0].message.content).not.toMatch(/supersedes/i);
+    expect(sent[0].message.details).not.toHaveProperty("resumedByUser", true);
+  });
+
+  it("nudges once when the main agent's MessageAgent answers an awaiting agent", async () => {
+    const record = await spawn(true);
+    settle(record, "awaiting_input", 1);
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "agent", true);
+    settle(record, "completed", 2, "ok");
+
+    expect(sentMessages()).toHaveLength(1);
+    expect(sentMessages()[0].message.content).toContain("completed]");
+  });
+
+  it("nudges a stop of an awaiting background agent like any first-settlement stop", async () => {
+    const record = await spawn(true);
+    settle(record, "awaiting_input", 1);
+    mockPi.sendMessage.mockClear();
+
+    // The manager's stop of a parked agent notifies without a new settlement.
+    settle(record, "stopped", 1, "Do you mean X or Y?");
+
+    expect(sentMessages()).toHaveLength(1);
+    expect(sentMessages()[0].message.content).toContain("stopped]");
+  });
+
+  it("parks again quietly when the user steers the resumed run", async () => {
+    const record = await spawn(true);
+    settle(record, "awaiting_input", 1);
+    resume(record, "user", true);
+    mockPi.sendMessage.mockClear();
+
+    settle(record, "awaiting_input", 2, "Still unsure.");
+
+    const sent = sentMessages();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].options).toEqual({ triggerTurn: false });
+    expect(sent[0].message.content).toContain("awaiting input]");
+  });
+
+  it("returns a foreground agent's awaiting result inline and sends no extra message", async () => {
+    const record = await spawn(false);
+    record.lifecycle.status = "awaiting_input";
+
+    settle(record, "awaiting_input", 1);
+
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("does not count an inline awaiting result as a completed report the user's answer would supersede", async () => {
+    manager = makeMockManager({ pendingGate: true });
+    coordinator = new SpawnCoordinator(manager);
+    const spawned = coordinator.spawn(mockPiApi, ctx, {
+      type: "builder",
+      prompt: "task",
+      description: "Test",
+      graceTurns: 6,
+      runInBackground: false,
+    });
+    const record = manager.getRecord("agent-0")!;
+    // The manager parks the agent, then opens the gate: the tool call returns the awaiting result.
+    record.lifecycle.status = "awaiting_input";
+    manager.getGateResolver("agent-0")!("Do you mean X or Y?");
+    await spawned;
+    mockPi.sendMessage.mockClear();
+
+    resume(record, "user", true);
+
+    expect(sentMessages()).toEqual([]);
+  });
+
+  it("nudges a foreground agent once its resumed run completes", async () => {
+    const record = await spawn(false);
+    settle(record, "awaiting_input", 1);
+    resume(record, "user", true);
+    mockPi.sendMessage.mockClear();
+
+    settle(record, "completed", 2, "done");
+
+    expect(sentMessages()).toHaveLength(1);
+    expect(sentMessages()[0].options).toMatchObject({ triggerTurn: true });
+  });
+
+  it("falls back to ui.notify when the awaiting message cannot be sent", async () => {
+    const notify = vi.fn();
+    const record = await spawn(true);
+    record.execution.spawnCtx = asExtensionContext({ ui: { notify } });
+    mockPi.sendMessage.mockImplementation(() => {
+      throw new Error("stale");
+    });
+
+    settle(record, "awaiting_input", 1);
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("awaiting input"), "info");
+  });
+
+  it("sends nothing once disposed", async () => {
+    const record = await spawn(true);
+    coordinator.dispose();
+
+    settle(record, "awaiting_input", 1);
+
+    expect(sentMessages()).toEqual([]);
   });
 });
 

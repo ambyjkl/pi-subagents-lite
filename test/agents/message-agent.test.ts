@@ -84,6 +84,15 @@ describe("executeMessageAgentTool", () => {
     }
   });
 
+  it("answers an agent awaiting input through its live session, as a continuation", async () => {
+    mockMatchAgents.mockReturnValue([target({ status: "awaiting_input" })]);
+
+    const result = await message();
+
+    expect(mockSteer).toHaveBeenCalledWith(ID, MESSAGE);
+    expect(result.content[0].text).toContain("continued");
+  });
+
   it("accepts a message for a running agent whose session does not exist yet", async () => {
     mockMatchAgents.mockReturnValue([target({ status: "running", session: false })]);
 

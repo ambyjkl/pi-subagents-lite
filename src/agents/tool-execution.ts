@@ -12,7 +12,7 @@ import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-
 import type { AgentManager } from "./agent-manager.ts";
 import type { SubagentAgentManager } from "./subagent-context.ts";
 import type { AgentRecord, ThinkingLevel } from "../types.ts";
-import { SHORT_ID_LENGTH } from "../types.ts";
+import { SHORT_ID_LENGTH, statusLabel } from "../types.ts";
 import type { AgentConfig } from "./types.ts";
 import { getAgentConfig, resolveTypeOrDiscover } from "./agent-types.ts";
 import { getSessionContextPercent } from "./usage.ts";
@@ -269,6 +269,17 @@ export async function executeAgentTool(
     throw new Error(`Agent failed: ${record.error || "unknown error"}`);
   }
 
+  // The user has this agent in chat mode and its turn ended without finishing (ADR-0013). The
+  // inline result is not a report: lead with that, because the status note trails the output.
+  if (record.lifecycle.status === "awaiting_input") {
+    details.agentId = agentId;
+    details.status = record.lifecycle.status;
+    return successResult(
+      `[Agent awaiting input — NOT finished] Agent ID: ${agentId}\n\n${formatResultContent(record)}`,
+      details,
+    );
+  }
+
   return successResult(formatResultContent(record), details);
 }
 
@@ -279,14 +290,18 @@ function shortId(record: AgentRecord): string {
   return record.id.slice(0, SHORT_ID_LENGTH);
 }
 
+/** Running, queued, or parked for the user's input: the agents StopAgent can act on. */
+function isStoppable(record: AgentRecord): boolean {
+  const { status } = record.lifecycle;
+  return status === "running" || status === "queued" || status === "awaiting_input";
+}
+
 /**
- * Build a compact list of running (or queued) agents.
+ * Build a compact list of running (or queued, or awaiting input) agents.
  * Format: "short_id (type), short_id (type)" — one line, easy for LLM to parse.
  */
 function formatRunningAgents(): string {
-  const agents = getManager()!
-    .listAgents()
-    .filter((a) => a.lifecycle.status === "running" || a.lifecycle.status === "queued");
+  const agents = getManager()!.listAgents().filter(isStoppable);
 
   if (agents.length === 0) return "none";
 
@@ -332,7 +347,7 @@ export async function executeStopAgentTool(
   const manager = getManager()!;
   const record = resolveAgent(params.agent_id, () => `Running agents: ${formatRunningAgents()}`);
 
-  if (record.lifecycle.status !== "running" && record.lifecycle.status !== "queued") {
+  if (!isStoppable(record)) {
     return successResult(
       `Agent ${shortId(record)} is already ${record.lifecycle.status}. Running agents: ${formatRunningAgents()}`,
     );
@@ -382,7 +397,7 @@ export async function executeMessageAgentTool(
 
   if (!wasRunning && !record.execution.session) {
     return successResult(
-      `Agent ${shortId(record)} is ${record.lifecycle.status} with no live session. Message not sent.`,
+      `Agent ${shortId(record)} is ${statusLabel(record.lifecycle.status)} with no live session. Message not sent.`,
     );
   }
 

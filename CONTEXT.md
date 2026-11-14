@@ -83,7 +83,7 @@ Per-agent transient display state (active tools, streaming response text) bridgi
 _Avoid_: Agent monitor, agent stats
 
 **Nudge**:
-A completion notification delivered to the parent session when a background agent settles (first settlement only), or when any agent settles after a continuation. A foreground agent's initial result returns inline through the tool call and delivers no nudge. Batched with a 200ms hold to coalesce rapid completions. A nudge still pending when its agent is resumed is dropped; the resumed run sends its own, marked as superseding the earlier report when the user resumed it. A **Resume notice** is the other parent-ward message.
+A completion notification delivered to the parent session when a background agent settles (first settlement only), or when any agent settles after a continuation. A foreground agent's initial result returns inline through the tool call and delivers no nudge. Batched with a 200ms hold to coalesce rapid completions. A nudge still pending when its agent is resumed is dropped; the resumed run sends its own, marked as superseding the earlier report when the user resumed it. A **Resume notice** is the other parent-ward message. An agent that ends its turn as **Awaiting input** sends no completed nudge.
 _Avoid_: Callback, notification
 
 **Awaiting input**:

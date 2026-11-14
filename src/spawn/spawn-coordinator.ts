@@ -1,5 +1,5 @@
 import { getPiInstance, getSessionCtx, getWidget } from "../shell.ts";
-import { SHORT_ID_LENGTH } from "../types.ts";
+import { SHORT_ID_LENGTH, statusLabel } from "../types.ts";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord, LiveView, SpawnConfig, ToolActivity } from "../types.ts";
@@ -48,6 +48,13 @@ const NUDGE_DELAY_MS = 200;
 /** Body of the notice that a completed agent is running again because the user steered it directly. */
 const RESUME_NOTICE =
   'The user answered or steered this subagent directly, so it is running again. Its earlier "completed" report is not final: do not act on it. A new completion notification will arrive when it truly finishes.';
+
+/**
+ * Body of the quiet record that a background agent stopped for the user's input. It informs, it
+ * does not instruct: the message is delivered without a turn, and what it says is what NOT to do.
+ */
+const AWAITING_INPUT_NOTICE =
+  "The user is in a conversation with this subagent (chat mode) and its turn ended, so it is waiting on the user. It may hold a question or interim output. It is NOT done: do not treat it as complete, merge its branch or remove its worktree. Nothing is needed from you now; a completion notification will arrive when it finishes.";
 
 /** Opens the completion nudge of a run the user restarted, so it reads as replacing the earlier report. */
 const RESUMED_RUN_NOTE = "(Resumed by the user after an earlier report; this report supersedes it.)";
@@ -162,8 +169,9 @@ export class SpawnCoordinator {
       markBackground(agentId);
     } else if (!isBackground) {
       await Promise.race([record.execution.promise, backgroundReady]);
-      // Still foreground: the tool call returns the result inline, so the parent has it.
-      if (!isBackground) this.reportedToParent.add(agentId);
+      // Still foreground: the tool call returns the result inline, so the parent has it. An
+      // awaiting-input result is not a report the user's answer could make stale.
+      if (!isBackground && record.lifecycle.status !== "awaiting_input") this.reportedToParent.add(agentId);
     }
 
     return { agentId, record, isBackground };
@@ -204,6 +212,12 @@ export class SpawnCoordinator {
    * on the record — a settled agent can be continued and re-feeds it.
    */
   onAgentComplete(record: AgentRecord): void {
+    // The agent stopped for the user's input in chat mode (ADR-0013): not a completion, so
+    // no nudge and the one-shot background gate stays unspent for the real one.
+    if (record.lifecycle.status === "awaiting_input") {
+      if (this.backgroundAgentIds.has(record.id)) this.emitAwaitingInputNotice(record);
+      return;
+    }
     // One-shot background gate: the first settlement of a background agent
     // nudges and consumes the set entry. Continuation settlements (ordinal
     // >= 2, written by the manager before this callback fires) nudge for both
@@ -282,8 +296,9 @@ export class SpawnCoordinator {
       includeStatus: true,
     });
     // A run the user restarted by typing into the subagent: the main agent may hold an
-    // earlier report from it, and this one replaces that.
-    const resumedByUser = record.lifecycle.resumedBy === "user";
+    // earlier report from it, and this one replaces that. Answering an awaiting agent replaces
+    // nothing: no report was ever sent for it.
+    const resumedByUser = record.lifecycle.resumedBy === "user" && !record.lifecycle.resumedFromAwaiting;
     if (resumedByUser) details.resumedByUser = true;
     const body = `${resumedByUser ? `${RESUMED_RUN_NOTE}\n\n` : ""}${formatResultContent(record)}`;
     const header = `[Subagent "${record.display.type}" ${record.id.slice(0, SHORT_ID_LENGTH)} ${record.lifecycle.status}]`;
@@ -311,6 +326,32 @@ export class SpawnCoordinator {
         } catch {
           // ctx may also be stale if session was replaced
         }
+      }
+    }
+  }
+
+  /**
+   * Record that a background agent stopped for the user's input. Never wakes or steers the parent
+   * (triggerTurn false, busy or idle): a busy parent sees it at its next turn boundary, an idle one
+   * just has it in the transcript. A foreground agent says so in its inline tool result instead.
+   */
+  private emitAwaitingInputNotice(record: AgentRecord): void {
+    if (this.disposed) return;
+    const pi = getPiInstance();
+    if (!pi) return;
+
+    const label = `[Subagent "${record.display.type}" ${record.id.slice(0, SHORT_ID_LENGTH)} ${statusLabel(record.lifecycle.status)}]`;
+    const details = buildAgentDetails(record, { includeStats: true, includeStatus: true });
+    try {
+      pi.sendMessage(
+        { customType: "subagent-result", content: `${label}\n\n${AWAITING_INPUT_NOTICE}`, details, display: true },
+        { triggerTurn: false },
+      );
+    } catch {
+      try {
+        record.execution.spawnCtx?.ui?.notify(`${label} Not finished: waiting on the user`, "info");
+      } catch {
+        // ctx may be stale if the session was replaced
       }
     }
   }

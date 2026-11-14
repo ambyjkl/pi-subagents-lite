@@ -3,7 +3,7 @@ import type { AgentLifecycle, AgentStatus, StopInitiator, WatchdogStopDetail } f
 
 const STATUS_NOTES: Partial<Record<AgentStatus, string>> = {
   awaiting_input:
-    "AWAITING INPUT — the user steered this agent directly and its turn ended without finishing; it may hold a question or interim output. It is NOT done: do not treat it as complete, merge its branch or remove its worktree. A completion notification will arrive when it finishes",
+    "AWAITING INPUT — the user is in a conversation with this agent (chat mode) and its turn ended; it may hold a question or interim output. It is NOT done: do not treat it as complete, merge its branch or remove its worktree. A completion notification will arrive when it finishes",
   aborted: "hit the turn limit before completion; output may be incomplete",
   turn_limited: "wrapped up at the turn limit — output may be partial",
 };
