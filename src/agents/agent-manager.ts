@@ -9,6 +9,7 @@ import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-wor
 import { continueAgentSession, runAgent, type RunResult } from "./agent-runner.ts";
 import { disposeChildSession, reapChildSessionProcesses } from "./session-teardown.ts";
 import { AgentOutputLog } from "./output-file.ts";
+import { userSteerText } from "./user-steer.ts";
 import { Watchdog } from "./watchdog.ts";
 import { getStore } from "../shell.ts";
 import {
@@ -38,9 +39,12 @@ const AGENT_ID_PREFIX_LENGTH = 17;
 
 const DEFAULT_CONCURRENCY_LIMIT = 4;
 
-/** Whether the agent status is terminal (no longer running or queued). */
+/**
+ * Whether the agent status is terminal. `awaiting_input` is not: the agent is parked for the user,
+ * alive and resumable, and Clear is refused until it is stopped or finished (ADR-0013).
+ */
 function isTerminalStatus(status: AgentStatus): boolean {
-  return status !== "running" && status !== "queued";
+  return status !== "running" && status !== "queued" && status !== "awaiting_input";
 }
 
 function formatModelError(
@@ -394,7 +398,11 @@ export class AgentManager {
               ? "error"
               : turnLimited
                 ? "turn_limited"
-                : "completed";
+                : // THE decision point (ADR-0013): in chat mode a plain turn end is not a completion,
+                  // the agent stopped for the user (a question, a pause).
+                  record.lifecycle.chatMode
+                  ? "awaiting_input"
+                  : "completed";
         }
         record.result = responseText;
         if (modelError) {
@@ -427,6 +435,7 @@ export class AgentManager {
               turnCount: record.stats.turnCount ?? 0,
               toolUseCount: record.stats.toolUses,
               totalTokens: getLifetimeTotal(record.stats.lifetimeUsage),
+              awaitingInput: record.lifecycle.status === "awaiting_input",
             });
           } catch {
             /* ignore */
@@ -497,9 +506,12 @@ export class AgentManager {
     const cost = record.stats.lifetimeUsage.cost;
     const baseline = record.execution.talliedCost ?? 0;
     this.totalAgentCost += cost - baseline;
-    const firstTally = record.execution.talliedCost === undefined;
     record.execution.talliedCost = cost;
-    if (firstTally) this.totalAgentCount++;
+    // An agent parked for the user is not done yet: it joins the count when it finishes or is stopped.
+    if (!record.execution.counted && record.lifecycle.status !== "awaiting_input") {
+      record.execution.counted = true;
+      this.totalAgentCount++;
+    }
     this.notifyComplete(record);
   }
 
@@ -596,7 +608,8 @@ export class AgentManager {
    *
    * Steering a running agent never touches its run: the message joins the session's steering
    * queue and the one run settles once, after the steered work. A direct user steer
-   * (source "user") also counts as activity for the idle watchdog.
+   * (source "user") also counts as activity for the idle watchdog, and is worded for the agent by
+   * its chat mode (`userSteerText`). An `awaiting_input` agent is continued like a settled one.
    */
   async steer(id: string, message: string, options: SteerOptions = {}): Promise<boolean> {
     const record = this.agents.get(id);
@@ -604,7 +617,12 @@ export class AgentManager {
     const source = options.source ?? "agent";
 
     if (record.lifecycle.status === "running") {
-      if (source === "user") this.watchdog.recordText(record.id);
+      // The user's steer of a RUNNING agent says what to do with it; a resume of a settled or
+      // awaiting agent goes through continueSettledAgent and is the message itself.
+      if (source === "user") {
+        this.watchdog.recordText(record.id);
+        message = userSteerText(message, !!record.lifecycle.chatMode);
+      }
       if (!record.execution.session) {
         if (!record.execution.pendingSteers) record.execution.pendingSteers = [];
         record.execution.pendingSteers.push(message);
@@ -620,6 +638,46 @@ export class AgentManager {
       }
     }
     return this.continueSettledAgent(record, message, source);
+  }
+
+  /** Switch chat mode (ADR-0013). It only changes what the next plain turn end does, so it is allowed in any state. */
+  setChatMode(id: string, enabled: boolean): boolean {
+    const record = this.agents.get(id);
+    if (!record) return false;
+    record.lifecycle.chatMode = enabled;
+    return true;
+  }
+
+  /**
+   * The user is done with an agent parked for their input (ADR-0013): it completes, chat mode is
+   * switched off, and the main agent gets the completion nudge it has not had yet. Returns false
+   * when the agent is not awaiting input.
+   */
+  submit(id: string): boolean {
+    const record = this.agents.get(id);
+    if (!record || record.lifecycle.status !== "awaiting_input") return false;
+    record.lifecycle.chatMode = false;
+    record.lifecycle.status = "completed";
+    // The parked turn end was a settlement the main agent never heard about; this is the one it hears.
+    record.execution.settlementCount++;
+    this.closeOutputLog(record);
+    this.tallyCompletion(record);
+    return true;
+  }
+
+  /** Write the DONE line a parked agent's log closed without (the log was finalized as awaiting input). */
+  private closeOutputLog(record: AgentRecord): void {
+    const path = record.display.outputFile;
+    if (!path) return;
+    try {
+      new AgentOutputLog(record.id, "", undefined, 0, path).finalize({
+        turnCount: record.stats.turnCount ?? 0,
+        toolUseCount: record.stats.toolUses,
+        totalTokens: getLifetimeTotal(record.stats.lifetimeUsage),
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -648,6 +706,8 @@ export class AgentManager {
       concurrencySlot.running++;
     }
 
+    const fromAwaiting = record.lifecycle.status === "awaiting_input";
+
     // Reset the record to running; stats (usage, toolUses, turnCount) carry over.
     const abortController = new AbortController();
     record.execution.abortController = abortController;
@@ -659,6 +719,7 @@ export class AgentManager {
     record.lifecycle.stoppedBy = undefined;
     record.lifecycle.stopDetail = undefined;
     record.lifecycle.resumedBy = source;
+    record.lifecycle.resumedFromAwaiting = fromAwaiting;
     record.result = undefined;
     record.error = undefined;
     // The earlier run's output file was closed with a DONE line; keep appending to it.
@@ -743,11 +804,14 @@ export class AgentManager {
     return this.stopAgent(record, stoppedBy, stopDetail);
   }
 
-  /** Abort the session or remove the agent from the queue. Returns false if not running/queued. */
+  /** Abort the session or remove the agent from the queue. Returns false if not running/queued/awaiting input. */
   private stopAgent(record: AgentRecord, stoppedBy?: StopInitiator, stopDetail?: WatchdogStopDetail): boolean {
     const wasQueued = record.lifecycle.status === "queued";
+    const wasAwaiting = record.lifecycle.status === "awaiting_input";
     if (wasQueued) {
       this.queue = this.queue.filter((q) => q.id !== record.id);
+    } else if (wasAwaiting) {
+      // Parked: its run already settled, so there is nothing to abort and no settlement to come.
     } else if (record.lifecycle.status !== "running") {
       return false;
     } else {
@@ -758,7 +822,10 @@ export class AgentManager {
     record.lifecycle.stopDetail = stopDetail;
     record.lifecycle.completedAt = Date.now();
     this.detachParentBinding(record);
-    if (!record.lifecycle.started) {
+    if (wasAwaiting) {
+      // No run is left to settle, so the stop itself finishes the agent: count it and tell the observers.
+      this.tallyCompletion(record);
+    } else if (!record.lifecycle.started) {
       // A record that never started has no run whose .finally opens the
       // gate — open it now and notify directly. Such stops never tally as
       // completed agents.

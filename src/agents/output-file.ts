@@ -3,7 +3,7 @@
  *
  * Path: /tmp/pi-agent-outputs/<agentId>.log
  * Append-only, human-readable, supports `tail -f`.
- * Lines: [USER], [TOOL], [ASSISTANT], [DONE] with ISO timestamps.
+ * Lines: [USER], [TOOL], [ASSISTANT], [DONE] (or [AWAITING INPUT]) with ISO timestamps.
  */
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -26,7 +26,9 @@ function findLastSentenceBoundary(text: string): number {
 
 function formatDoneLine(stats: OutputFinalStats): string {
   const tokensStr = `${formatTokens(stats.totalTokens)} tokens`;
-  return `${timestamp()} [DONE] ${stats.turnCount} turns, ${stats.toolUseCount} tool uses, ${tokensStr}\n`;
+  // A reader tailing the file must not take a parked agent for a finished one.
+  const marker = stats.awaitingInput ? "AWAITING INPUT" : "DONE";
+  return `${timestamp()} [${marker}] ${stats.turnCount} turns, ${stats.toolUseCount} tool uses, ${tokensStr}\n`;
 }
 /** Max content length for full tool result display — longer results get a summary line. */
 const MAX_TOOL_RESULT_DISPLAY_LENGTH = 500;
@@ -312,6 +314,8 @@ export interface OutputFinalStats {
   turnCount: number;
   toolUseCount: number;
   totalTokens: number;
+  /** The agent stopped for the user's input and is not finished: the closing line says so instead of DONE. */
+  awaitingInput?: boolean;
 }
 
 /**
@@ -377,6 +381,7 @@ export class AgentOutputLog {
       this.statsRef.turnCount = stats.turnCount;
       this.statsRef.toolUseCount = stats.toolUseCount;
       this.statsRef.totalTokens = stats.totalTokens;
+      this.statsRef.awaitingInput = stats.awaitingInput;
       this.cleanup();
       this.cleanup = undefined;
       this.statsRef = undefined;

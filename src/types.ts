@@ -100,7 +100,23 @@ export interface CompactionInfo {
 
 // --- Sub-object interfaces for decomposed AgentRecord ---
 
-export type AgentStatus = "queued" | "running" | "completed" | "turn_limited" | "aborted" | "stopped" | "error";
+export type AgentStatus =
+  | "queued"
+  | "running"
+  | "awaiting_input"
+  | "completed"
+  | "turn_limited"
+  | "aborted"
+  | "stopped"
+  | "error";
+
+/**
+ * Display text for a status. Only `awaiting_input` differs from its identifier; the rest read as
+ * they are named, and the widgets and tools printed them raw before the new status existed.
+ */
+export function statusLabel(status: AgentStatus): string {
+  return status === "awaiting_input" ? "awaiting input" : status;
+}
 
 /** Who initiated an agent stop: "user" via UI menu, "agent" via StopAgent tool, or "watchdog" (stuck-agent detection). */
 export type StopInitiator = "user" | "agent" | "watchdog";
@@ -127,6 +143,15 @@ export interface AgentLifecycle {
    * first run. Overwritten by every continuation, so it describes the run that is, or last was, running.
    */
   resumedBy?: "user" | "agent";
+  /**
+   * Chat mode, switched by the user (`c` in the conversation viewer, the agent's `/agents` actions):
+   * while on, a plain turn end parks the agent as `awaiting_input` instead of completing it
+   * (ADR-0013). It does nothing else and persists across runs until the user turns it off or
+   * submits the agent, which clears it.
+   */
+  chatMode?: boolean;
+  /** The current run is the user answering an `awaiting_input` agent: no earlier "completed" report exists to supersede. */
+  resumedFromAwaiting?: boolean;
   /**
    * Whether the agent ever started running. Set false at spawn, flipped true
    * synchronously in startAgent before the run — distinguishes never-started
@@ -202,6 +227,8 @@ export interface AgentExecutionState {
    * the delta since the last tally.
    */
   talliedCost?: number;
+  /** Whether the agent is in the session's done count: set at the first settlement that is not `awaiting_input`. */
+  counted?: boolean;
   /**
    * Widget live-view state, attached by the coordinator at spawn. Retained
    * across settlement so a continuation keeps feeding the same view.

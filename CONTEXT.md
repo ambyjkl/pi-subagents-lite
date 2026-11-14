@@ -86,8 +86,16 @@ _Avoid_: Agent monitor, agent stats
 A completion notification delivered to the parent session when a background agent settles (first settlement only), or when any agent settles after a continuation. A foreground agent's initial result returns inline through the tool call and delivers no nudge. Batched with a 200ms hold to coalesce rapid completions. A nudge still pending when its agent is resumed is dropped; the resumed run sends its own, marked as superseding the earlier report when the user resumed it. A **Resume notice** is the other parent-ward message.
 _Avoid_: Callback, notification
 
+**Awaiting input**:
+The non-final status (`awaiting_input`) of an agent whose turn ended after the user steered it directly while it was running (ADR-0013). Unlike **Settled**, the session stays alive and the agent is resumable: a user reply or a **MessageAgent** message returns it to running with no **Steered flag**, and its next turn end completes normally with one **Nudge**. It sends no completed **Nudge** (a background agent gets one quiet, non-triggering record that says it is not done), holds no concurrency slot, is exempt from the **Watchdog**, is kept by compaction, is stoppable, and cannot be cleared while awaiting. AgentStatus always lists it.
+_Avoid_: Paused, blocked, waiting, idle
+
+**Steered flag**:
+`lifecycle.steeredByUser`: set only when the user (not **MessageAgent**) steers an agent while it is running; read once, at the next turn end, where it turns the outcome into **Awaiting input** instead of completed; cleared there. A resume of a **Settled** or awaiting agent never sets it.
+_Avoid_: Interacted flag, dirty flag
+
 **Resumed by user**:
-A **Settled** agent the user prompted again by typing into it directly (conversation viewer or `/agents` menu) rather than through **MessageAgent**. "Completed" only ever means the turn ended, so the main agent may already hold, and act on, a report that is no longer final. The agent keeps its id and returns to running (`lifecycle.resumedBy = "user"`). If the main agent had been told it completed, it receives a **Resume notice** at once (steer-delivered when busy, recorded without a turn when idle). AgentStatus flags the running agent, and its next **Nudge** supersedes the earlier report. Steering an agent that is still running is not a resume: pi queues the message and the single run settles once (ADR-0012).
+A **Settled** agent the user prompted again by typing into it directly (conversation viewer or `/agents` menu) rather than through **MessageAgent**. "Completed" only ever means the turn ended, so the main agent may already hold, and act on, a report that is no longer final. The agent keeps its id and returns to running (`lifecycle.resumedBy = "user"`). If the main agent had been told it completed, it receives a **Resume notice** at once (steer-delivered when busy, recorded without a turn when idle). AgentStatus flags the running agent, and its next **Nudge** supersedes the earlier report. Steering an agent that is still running is not a resume: pi queues the message and the single run settles once, as **Awaiting input** rather than completed (ADR-0012, ADR-0013). Answering an **Awaiting input** agent sends no Resume notice, because no report went stale.
 _Avoid_: Reopened, revived, interrupted
 
 **Resume notice**:
@@ -106,11 +114,11 @@ The 17-character key of an agent record. All tool and widget text shows the firs
 _Avoid_: Short id (as a second kind of id), agent key
 
 **MessageAgent**:
-The main session agent's tool for sending input to a **Subagent** it already spawned: a running agent receives it at its next turn boundary, a **Settled** agent with a live session restarts. The agent is not sent a notice for its own message; the user's direct steer is the **Resumed by user** case. Same seam as the **ConversationViewer overlay**'s steer/continue. Runs parent-ward; the opposite direction is a **Nudge**.
+The main session agent's tool for sending input to a **Subagent** it already spawned: a running agent receives it at its next turn boundary, a **Settled** or **Awaiting input** agent with a live session restarts (as running, with no **Steered flag**, so it ends completed). The agent is not sent a notice for its own message; the user's direct steer is the **Resumed by user** case. Same seam as the **ConversationViewer overlay**'s steer/continue. Runs parent-ward; the opposite direction is a **Nudge**.
 _Avoid_: SteerAgent, agent messaging tool, follow-up
 
 **Watchdog**:
-Time-based stuck-agent detection that stops a running agent when a single tool call exceeds the tool timeout, or when the agent produces no activity (tool events or streamed response text) for longer than the idle timeout. Both thresholds are configurable in minutes; a watchdog stop is recorded with a reason distinct from a user stop.
+Time-based stuck-agent detection that stops a running agent when a single tool call exceeds the tool timeout, or when the agent produces no activity (tool events or streamed response text) for longer than the idle timeout. Both thresholds are configurable in minutes; a watchdog stop is recorded with a reason distinct from a user stop. It only watches running agents: an agent in **Awaiting input** is waiting for the user, not idle, and is never stopped by it.
 _Avoid_: Timeout killer, stuck-agent detector
 
 ## Relationships
@@ -141,6 +149,7 @@ _Avoid_: Timeout killer, stuck-agent detector
 - A **MessageAgent** message lands after the current turn's tool calls finish, never mid-tool-call, and is dropped if the run settles before that boundary
 - **MessageAgent** continues any **Settled** **Subagent** with a live session, including one a human stopped: the model can restart a deliberately stopped agent
 - Only the main session agent holds **MessageAgent**, `StopAgent` and `AgentStatus`; a **Subagent** never does, so cross-**Subagent** messaging and stopping are unreachable
+- A **Subagent** whose turn ends after a user steer of its running state is **Awaiting input**, not **Settled**; it becomes running again on a reply and is **Settled** only when that run ends
 - A **Nudge** carries a **Subagent** result parent-ward; **MessageAgent** carries input the other way
 - **Compact tool calls** and **Ungrouped tools** live in the **Global config** only: a **Project config** cannot carry either, and clearing **Model override**s keeps both
 

@@ -39,6 +39,7 @@ export function applyAgentColor(text: string, ansiColor: string, fallback: () =>
 const STATUS_ICON: Record<AgentStatus, { icon: string; color: "accent" | "success" | "warning" | "error" | "dim" }> = {
   queued: { icon: "◆", color: "accent" },
   running: { icon: "◈", color: "accent" },
+  awaiting_input: { icon: "◐", color: "warning" },
   completed: { icon: "✓", color: "success" },
   turn_limited: { icon: "✓", color: "warning" },
   error: { icon: "✗", color: "error" },

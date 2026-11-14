@@ -14,16 +14,24 @@ nudge says it supersedes the earlier report, and `AgentStatus` marks the running
 the user. A resume by `MessageAgent` is silent, and so is one for an agent whose completion was never
 announced.
 
-Steering an agent that is still running changes nothing: pi queues the message and drains the queue
-before the run ends, so the run settles once, after the steered work.
+Steering an agent that is still running does not split the run: pi queues the message and drains
+the queue before the run ends, so the run settles once, after the steered work. That settlement is
+no longer always `completed`: see ADR-0013, where a turn end after a user steer of a running agent
+is `awaiting_input`.
 
-## Why not a new "awaiting input" status
+## Why not a new "awaiting input" status for a resume
 
-The extension cannot tell a final completion from a turn end that is waiting for the user: both are
-an assistant message with no tool call. A new status would need a heuristic over the last message,
-and would touch every place that enumerates statuses (widget, menus, statistics, nudges, compaction
-clearing, concurrency). The notice reaches the same goal, the main agent only acts on a completion
-that no later user input has superseded, without changing the contract of `completed`.
+For a resume of an already-completed agent the extension still has nothing to go on: a final
+completion and a turn end that waits for the user are both an assistant message with no tool call,
+and a new status would need a heuristic over the last message. The notice reaches the same goal, the
+main agent only acts on a completion that no later user input has superseded.
+
+> **Superseded in part by ADR-0013.** The original text said the extension "cannot tell" the two
+> apart. For one case it can: when the user steered the agent while it was running, the extension
+> knows the user is mid-conversation with it, so that turn end is the new non-final
+> `awaiting_input` status rather than `completed`. That case is the one that caused the incident
+> (the main agent merged an unfinished agent's branch). The resume-of-completed behaviour above is
+> unchanged.
 
 ## Consequences
 

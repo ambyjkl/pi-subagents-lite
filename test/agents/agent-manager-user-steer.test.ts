@@ -1,7 +1,8 @@
 /**
  * agent-manager-user-steer.test.ts — A user who steers a subagent directly (the viewer or the
  * /agents menu, not the main agent's MessageAgent tool) must never turn the run into a
- * completion the parent can act on early.
+ * completion the parent can act on early. The awaiting-input transition itself is covered in
+ * agent-manager-awaiting-input.test.ts.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite-plus/test";
 import { fakeCtx, fakePi, makeResolvablePromise } from "../fixtures.js";
@@ -15,6 +16,7 @@ import {
 } from "./manager-mocks.js";
 import { AgentManager, WATCHDOG_TICK_MS } from "../../src/agents/agent-manager.js";
 import { asAgentSession } from "../pi-boundaries.js";
+import { userSteerText } from "../../src/agents/user-steer.js";
 import type { AgentRecord } from "../../src/types.js";
 
 describe("AgentManager — direct user steering", () => {
@@ -82,7 +84,7 @@ describe("AgentManager — direct user steering", () => {
 
       await expect(manager.steer(id, "also check X", { source: "user" })).resolves.toBe(true);
 
-      expect(session.steer).toHaveBeenCalledWith("also check X");
+      expect(session.steer).toHaveBeenCalledWith(userSteerText("also check X", false));
       expect(record.lifecycle.status).toBe("running");
       expect(record.execution.settled).toBe(false);
       expect(record.execution.abortController?.signal.aborted).toBe(false);
@@ -90,7 +92,7 @@ describe("AgentManager — direct user steering", () => {
       expect(onResume).not.toHaveBeenCalled();
       expect(mockModules.mockContinueAgentSession).not.toHaveBeenCalled();
 
-      // The one run settles once, as completed, after the steered work.
+      // The one run settles once, after the steered work. Steering is not chat mode, so it completes.
       await settle(run, session);
       expect(record.lifecycle.status).toBe("completed");
       expect(record.execution.settlementCount).toBe(1);
@@ -118,7 +120,7 @@ describe("AgentManager — direct user steering", () => {
       const session = mockAgentSession();
       mockModules.mockRunAgent.mock.calls[0][3].onSessionCreated(session);
 
-      expect(session.steer).toHaveBeenCalledWith("early");
+      expect(session.steer).toHaveBeenCalledWith(userSteerText("early", false));
       expect(manager.getRecord(id)!.lifecycle.status).toBe("running");
       expect(onComplete).not.toHaveBeenCalled();
       await settle(run, session);
