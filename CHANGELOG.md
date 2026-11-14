@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- When you steer a subagent yourself (conversation viewer or `/agents` menu) after the main agent was told it completed, the main agent now gets a `[Subagent … resumed by the user]` message right away: the earlier completed report is not final, do not act on it, a new completion will follow. It reaches a busy main agent before its next model call and is only recorded, without waking it, when it is idle. The resumed run's own completion notification says it supersedes the earlier report, `AgentStatus` marks the running agent as resumed by the user, and the Subagent Result card shows the same note. A resume by the main agent's own `MessageAgent` needs no notice. A "completed" status only ever meant the turn ended, so this is the signal that it was not the end.
+- `lifecycle.resumedBy` records who restarted a settled agent (`"user"` or `"agent"`).
 - Processes a subagent leaves running are stopped when its run ends and again when its session is disposed. `server &`, `nohup x &` and `setsid x` outlive a `bash` call, so they are found by the `PI_SESSION_ID` in their environment (`/proc` on Linux, `ps axeww` on macOS and BSD), sent SIGTERM, and SIGKILLed after 1.5 s. Nothing is stopped on Windows, and processes that clear their environment or belong to another user are not found.
 - `AgentStatus` lists each agent on its own line with its `description` and, when it runs in a worktree, its `worktree_path`. `MessageAgent`'s unknown-agent report uses the same list.
 - The subagent conversation viewer shows images from tool results (a `read` of a screenshot, say) the way pi does: below the call's block after a blank row, drawn with pi-tui's own `Image`, so `terminal.images` (or the autodetected protocol), `terminal.showImages`, `terminal.imageWidthCells` and the PNG conversion for non-PNG images apply. Drawn inline on Kitty-protocol terminals only; elsewhere, or with images off, they are listed as `[Image: [image/png] 800x600]` like in pi. An image cut off by the scroll window is cropped to the visible rows. In the compact layout the image follows its call's row, and that call is not folded into a "N tools" summary.
@@ -18,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A completion nudge still waiting in its 200 ms batch window when you resumed that agent is dropped instead of announcing a "running" agent with an empty result.
+- The output file (`tail -f`) of an agent continued after completion keeps recording: the continuation is appended after the earlier `[DONE]` line instead of going unwritten.
+- Resuming a stopped agent clears its stale "stopped by" reason.
+- A message typed into the viewer that is not delivered (the agent is still settling, its model's concurrency slot is full, or the text is an extension command) now shows a warning instead of vanishing.
+- Typing into a running agent's viewer counts as activity for the idle watchdog, so a stalled agent you just redirected is not stopped as idle a moment later.
 - Expanding an `Agent` card for a background launch (click or Ctrl+O) shows the agent's model and thinking level, its id and the prompt it was given; before, it had nothing more to show.
 - The "Subagent Result" card now expands and collapses on a left click, like tool rows, instead of only with Ctrl+O. Ctrl+O still overrides a clicked card.
 - Parallel tool calls starting in the same millisecond no longer overwrite each other in the widget's active-tool list.

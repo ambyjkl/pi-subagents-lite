@@ -83,8 +83,15 @@ Per-agent transient display state (active tools, streaming response text) bridgi
 _Avoid_: Agent monitor, agent stats
 
 **Nudge**:
-A completion notification delivered to the parent session when a background agent settles (first settlement only), or when any agent settles after a continuation. A foreground agent's initial result returns inline through the tool call and delivers no nudge. Batched with a 200ms hold to coalesce rapid completions.
+A completion notification delivered to the parent session when a background agent settles (first settlement only), or when any agent settles after a continuation. A foreground agent's initial result returns inline through the tool call and delivers no nudge. Batched with a 200ms hold to coalesce rapid completions. A nudge still pending when its agent is resumed is dropped; the resumed run sends its own, marked as superseding the earlier report when the user resumed it. A **Resume notice** is the other parent-ward message.
 _Avoid_: Callback, notification
+
+**Resumed by user**:
+A **Settled** agent the user prompted again by typing into it directly (conversation viewer or `/agents` menu) rather than through **MessageAgent**. "Completed" only ever means the turn ended, so the main agent may already hold, and act on, a report that is no longer final. The agent keeps its id and returns to running (`lifecycle.resumedBy = "user"`). If the main agent had been told it completed, it receives a **Resume notice** at once (steer-delivered when busy, recorded without a turn when idle). AgentStatus flags the running agent, and its next **Nudge** supersedes the earlier report. Steering an agent that is still running is not a resume: pi queues the message and the single run settles once (ADR-0012).
+_Avoid_: Reopened, revived, interrupted
+
+**Resume notice**:
+The parent-ward message sent when a completed agent is **Resumed by user**: customType `subagent-result`, `details.resumedByUser`, status running. Not sent for a resume by **MessageAgent** (the main agent knows) or for an agent whose completion the main agent was never told about.
 
 **Parent interrupt binding**:
 The binding of a foreground Subagent to its parent run's interrupt signal, established at spawn. When the signal aborts (Esc during streaming or tool execution, a stop command, or session shutdown), a running Subagent stops as Stopped (stoppedBy "user", partial output preserved) and a queued Subagent is cancelled before starting. The binding is detached when the Subagent settles, stops, or is removed, so a later interrupt never touches settled work. Background Subagents are never bound.
@@ -99,7 +106,7 @@ The 17-character key of an agent record. All tool and widget text shows the firs
 _Avoid_: Short id (as a second kind of id), agent key
 
 **MessageAgent**:
-The main session agent's tool for sending input to a **Subagent** it already spawned: a running agent receives it at its next turn boundary, a **Settled** agent with a live session restarts. Same seam as the **ConversationViewer overlay**'s steer/continue. Runs parent-ward; the opposite direction is a **Nudge**.
+The main session agent's tool for sending input to a **Subagent** it already spawned: a running agent receives it at its next turn boundary, a **Settled** agent with a live session restarts. The agent is not sent a notice for its own message; the user's direct steer is the **Resumed by user** case. Same seam as the **ConversationViewer overlay**'s steer/continue. Runs parent-ward; the opposite direction is a **Nudge**.
 _Avoid_: SteerAgent, agent messaging tool, follow-up
 
 **Watchdog**:
