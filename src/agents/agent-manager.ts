@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { continueAgentSession, runAgent, type RunResult } from "./agent-runner.ts";
 import { disposeChildSession, reapChildSessionProcesses } from "./session-teardown.ts";
 import { AgentOutputLog } from "./output-file.ts";
@@ -63,6 +63,19 @@ export interface ConcurrencyConfig {
 
 type OnAgentComplete = (record: AgentRecord) => void;
 type OnAgentStart = (record: AgentRecord) => void;
+/** A settled agent was prompted again: by the user directly, or by the main agent's MessageAgent. */
+type OnAgentResume = (record: AgentRecord, by: ResumeInitiator) => void;
+
+/** Who sent the message that resumed a settled agent, or steered a running one. */
+export type ResumeInitiator = "user" | "agent";
+
+export interface SteerOptions {
+  /**
+   * Who is sending. Defaults to "agent" (the main agent's MessageAgent): it already knows it sent
+   * the message. "user" marks input typed straight into the subagent, which the main agent cannot see.
+   */
+  source?: ResumeInitiator;
+}
 
 interface ConcurrencySlot {
   limit: number;
@@ -90,6 +103,7 @@ export class AgentManager {
   private watchdogInterval: ReturnType<typeof setInterval>;
   private onComplete?: OnAgentComplete;
   private onStart?: OnAgentStart;
+  private onResume?: OnAgentResume;
 
   /** Completion-gate resolvers for every spawned record, keyed by agent id. The gate
    * (record.execution.promise) is created at spawn and opened exactly once at the record's
@@ -493,6 +507,11 @@ export class AgentManager {
     this.onComplete = cb;
   }
 
+  /** Observe every continuation of a settled agent (the record is already running again). */
+  setOnResume(cb: OnAgentResume): void {
+    this.onResume = cb;
+  }
+
   /** Get the session-level cumulative agent cost. Survives record removal (Clear/dispose). */
   getTotalAgentCost(): number {
     return this.totalAgentCost;
@@ -574,12 +593,18 @@ export class AgentManager {
    * yet. A settled agent (completed, errored, aborted, stopped, turn-limited)
    * with a live session is continued: the concurrency slot is re-reserved,
    * the record is reset to running, and the session is prompted again.
+   *
+   * Steering a running agent never touches its run: the message joins the session's steering
+   * queue and the one run settles once, after the steered work. A direct user steer
+   * (source "user") also counts as activity for the idle watchdog.
    */
-  async steer(id: string, message: string): Promise<boolean> {
+  async steer(id: string, message: string, options: SteerOptions = {}): Promise<boolean> {
     const record = this.agents.get(id);
     if (!record) return false;
+    const source = options.source ?? "agent";
 
     if (record.lifecycle.status === "running") {
+      if (source === "user") this.watchdog.recordText(record.id);
       if (!record.execution.session) {
         if (!record.execution.pendingSteers) record.execution.pendingSteers = [];
         record.execution.pendingSteers.push(message);
@@ -594,7 +619,7 @@ export class AgentManager {
         return false;
       }
     }
-    return this.continueSettledAgent(record, message);
+    return this.continueSettledAgent(record, message, source);
   }
 
   /**
@@ -603,7 +628,7 @@ export class AgentManager {
    * record cannot be continued (still settling, no session, streaming, or
    * the model's concurrency slot is full).
    */
-  private continueSettledAgent(record: AgentRecord, message: string): boolean {
+  private continueSettledAgent(record: AgentRecord, message: string, source: ResumeInitiator): boolean {
     // settled flips to true only after the previous run chain's .finally, so
     // a continuation cannot race the settlement cleanup (slot release, gate).
     if (!record.execution.settled) return false;
@@ -630,8 +655,14 @@ export class AgentManager {
     record.lifecycle.status = "running";
     record.lifecycle.startedAt = Date.now();
     record.lifecycle.completedAt = undefined;
+    // A resumed stopped agent must not keep reporting who stopped it.
+    record.lifecycle.stoppedBy = undefined;
+    record.lifecycle.stopDetail = undefined;
+    record.lifecycle.resumedBy = source;
     record.result = undefined;
     record.error = undefined;
+    // The earlier run's output file was closed with a DONE line; keep appending to it.
+    this.resumeOutputLog(record, message, session);
     // A stale idle clock from the first run would kill the continuation
     // immediately — restart the watchdog before the new turn begins.
     this.watchdog.start(record.id);
@@ -646,10 +677,24 @@ export class AgentManager {
       signal: abortController.signal,
     });
     this.attachSettlementChain(record, promise, concurrencySlot);
+    try {
+      this.onResume?.(record, source);
+    } catch {
+      /* ignore */
+    }
     // The run proceeds asynchronously; the caller only learns the wiring
     // succeeded. The parent abort binding is deliberately NOT re-attached —
     // the parent turn that spawned the agent is over.
     return true;
+  }
+
+  /** Re-open the record's output file for a continuation; no-op when the agent never had one. */
+  private resumeOutputLog(record: AgentRecord, message: string, session: AgentSession): void {
+    const path = record.display.outputFile;
+    if (!path) return;
+    const log = new AgentOutputLog(record.id, message, undefined, getStore().agent.outputThinkingBufferSize, path);
+    log.attach(session);
+    record.execution.outputLog = log;
   }
 
   getRecord(id: string): AgentRecord | undefined {

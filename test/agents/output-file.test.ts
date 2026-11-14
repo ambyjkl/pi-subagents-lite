@@ -665,4 +665,60 @@ describe("AgentOutputLog", () => {
     const log = new AgentOutputLog(testAgentId, "test", dir);
     expect(log.path).toBe(`${dir}/${testAgentId}.log`);
   });
+
+  describe("resumed after a DONE line (a continuation)", () => {
+    it("appends the continuation after the DONE line, never rewriting what was written", () => {
+      const dir = fixture.getDir();
+      const first = new AgentOutputLog(testAgentId, "first task", dir);
+      const session = asAgentSession(createMockSession());
+      const messages: Array<Record<string, unknown>> = [
+        { role: "user", content: "first task" },
+        { role: "assistant", content: [{ type: "text", text: "Which branch?" }] },
+      ];
+      Object.defineProperty(session, "messages", { get: () => messages, configurable: true });
+      first.attach(session);
+      first.finalize({ turnCount: 1, toolUseCount: 0, totalTokens: 10 });
+
+      const resumed = new AgentOutputLog(testAgentId, "main", dir, 0, first.path);
+      expect(resumed.path).toBe(first.path);
+      resumed.attach(session);
+      messages.push(
+        { role: "user", content: "main" },
+        { role: "assistant", content: [{ type: "text", text: "Merging main." }] },
+      );
+      session._fireTurnEnd();
+      resumed.finalize({ turnCount: 2, toolUseCount: 0, totalTokens: 20 });
+
+      const lines = readFileSync(first.path, "utf-8").trim().split("\n");
+      expect(lines.map((l) => l.replace(/^\S+ /, ""))).toEqual([
+        "[USER] first task",
+        "[ASSISTANT] Which branch?",
+        expect.stringMatching(/^\[DONE\] 1 turns/),
+        "[USER] main",
+        "[ASSISTANT] Merging main.",
+        expect.stringMatching(/^\[DONE\] 2 turns/),
+      ]);
+    });
+
+    it("also logs a user message steered into the middle of a run", () => {
+      const dir = fixture.getDir();
+      const log = new AgentOutputLog(testAgentId, "task", dir);
+      const session = asAgentSession(createMockSession());
+      Object.defineProperty(session, "messages", {
+        get: () => [
+          { role: "user", content: "task" },
+          { role: "assistant", content: [{ type: "text", text: "Working." }] },
+          { role: "user", content: "use the other API" },
+          { role: "assistant", content: [{ type: "text", text: "Switching." }] },
+        ],
+        configurable: true,
+      });
+      log.attach(session);
+      session._fireTurnEnd();
+
+      const text = readFileSync(log.path, "utf-8");
+      expect(text).toContain("[USER] use the other API");
+      expect(text.indexOf("Working.")).toBeLessThan(text.indexOf("use the other API"));
+    });
+  });
 });

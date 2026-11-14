@@ -122,6 +122,12 @@ export interface AgentLifecycle {
   /** Reason detail for watchdog stops (tool name + elapsed). Absent for user/agent stops. */
   stopDetail?: WatchdogStopDetail;
   /**
+   * Who prompted this agent again after it settled, for the current (latest) run: "user" for input
+   * typed straight into the subagent, "agent" for the main agent's MessageAgent. Undefined for the
+   * first run. Overwritten by every continuation, so it describes the run that is, or last was, running.
+   */
+  resumedBy?: "user" | "agent";
+  /**
    * Whether the agent ever started running. Set false at spawn, flipped true
    * synchronously in startAgent before the run — distinguishes never-started
    * stops from ran-then-stopped ones so the status note is accurate.

@@ -230,8 +230,9 @@ export function streamToOutputFile(
   path: string,
   stats?: OutputFinalStats,
   bufferSize: number = 0,
+  firstUnwritten: number = 1,
 ): () => void {
-  let writtenCount = 1; // initial user prompt already written
+  let writtenCount = firstUnwritten; // the initial user prompt is already written
   const thinking = new ThinkingStreamer(path, bufferSize);
 
   const flush = () => {
@@ -327,10 +328,22 @@ export class AgentOutputLog {
   private cleanup?: () => void;
   private statsRef?: OutputFinalStats;
   private bufferSize: number;
+  /** True when continuing a closed log: the file is appended to, never recreated. */
+  private readonly resumed: boolean;
 
-  constructor(agentId: string, prompt: string, baseDir?: string, bufferSize: number = 0) {
-    this.path = createOutputFilePath(agentId, baseDir);
-    writeInitialEntry(this.path, prompt);
+  /**
+   * @param resumePath - Reopen an existing log (the agent was continued after its DONE line):
+   * nothing is written until the session streams, and the continuation prompt, being a user
+   * message in the session, lands as a [USER] line with everything after it.
+   */
+  constructor(agentId: string, prompt: string, baseDir?: string, bufferSize: number = 0, resumePath?: string) {
+    this.resumed = resumePath !== undefined;
+    if (resumePath !== undefined) {
+      this.path = resumePath;
+    } else {
+      this.path = createOutputFilePath(agentId, baseDir);
+      writeInitialEntry(this.path, prompt);
+    }
     this.bufferSize = bufferSize;
   }
 
@@ -341,7 +354,14 @@ export class AgentOutputLog {
    */
   attach(session: AgentSession): void {
     this.statsRef = { turnCount: 0, toolUseCount: 0, totalTokens: 0 };
-    this.cleanup = streamToOutputFile(session, this.path, this.statsRef, this.bufferSize);
+    // A resumed log starts after the messages the earlier run already wrote.
+    this.cleanup = streamToOutputFile(
+      session,
+      this.path,
+      this.statsRef,
+      this.bufferSize,
+      this.resumed ? session.messages.length : 1,
+    );
   }
 
   /**

@@ -40,7 +40,7 @@ const hoisted = vi.hoisted(() => ({
     appendFileSync: vi.fn(),
     existsSync: vi.fn(),
   },
-  mockAgentOutputLog: vi.fn(function () {
+  mockAgentOutputLog: vi.fn(function (..._args: unknown[]) {
     return { attach: vi.fn(), finalize: vi.fn(), path: "/tmp/out.log" };
   }),
   mockGetAgentConfig: vi.fn(() => undefined),
