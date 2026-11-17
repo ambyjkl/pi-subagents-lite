@@ -28,6 +28,7 @@ const contractStore = vi.hoisted(() => ({
   agent: {
     systemPromptMode: "replace",
     includeContextFiles: false,
+    includeSubagentsMd: false,
     loadSkillsImplicitly: true,
     loadExtensionsImplicitly: true,
     loadToolsImplicitly: true,

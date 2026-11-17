@@ -4,6 +4,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vite-plus/test";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fakeCtx, fakePi as makeFakePi } from "../fixtures.js";
 import { mockModules, defaultConfig, defaultAgentConfig, resetMocks, createMockSession } from "./agent-runner-mocks.js";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
@@ -274,6 +276,71 @@ describe("resolveEffectiveSystemPromptMode", () => {
     expect(resolveEffectiveSystemPromptMode(globalMode, override)).toBe(expected);
   });
 });
+describe("runAgent — SUBAGENTS.md", () => {
+  let dir: string;
+  let agentDir: string;
+
+  beforeEach(() => {
+    resetMocks();
+    fakePi.exec.mockResolvedValue({ code: 0, stdout: "true" });
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "runner-subagents-md-"));
+    agentDir = path.join(dir, "agent");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "SUBAGENTS.md"), "subagent rule");
+    mockModules.mockGetAgentDir.mockReturnValue(agentDir);
+    const session = createMockSession();
+    session.getActiveToolNames.mockReturnValue(["read", "bash", "edit"]);
+    mockModules.mockCreateAgentSession.mockResolvedValue({ session, extensionsResult: {} });
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const promptExtras = () => mockModules.mockBuildAgentPrompt.mock.calls[0]?.[3];
+
+  it("adds SUBAGENTS.md after the AGENTS.md files", async () => {
+    mockModules.mockIncludeContextFiles = true;
+    mockModules.mockLoadProjectContextFiles.mockReturnValue([{ path: "AGENTS.md", content: "project instructions" }]);
+
+    await runAgent(fakeCtx(), "test-agent", "do something", { pi: fakePi });
+
+    expect(promptExtras()?.contextFiles).toEqual([
+      { path: "AGENTS.md", content: "project instructions" },
+      { path: path.join(agentDir, "SUBAGENTS.md"), content: "subagent rule" },
+    ]);
+  });
+
+  it("still adds SUBAGENTS.md when AGENTS.md is switched off", async () => {
+    mockModules.mockIncludeContextFiles = false;
+
+    await runAgent(fakeCtx(), "test-agent", "do something", { pi: fakePi });
+
+    expect(promptExtras()?.contextFiles).toEqual([
+      { path: path.join(agentDir, "SUBAGENTS.md"), content: "subagent rule" },
+    ]);
+  });
+
+  it("does not read SUBAGENTS.md when includeSubagentsMd is off, whatever AGENTS.md does", async () => {
+    mockModules.mockIncludeContextFiles = true;
+    mockModules.mockIncludeSubagentsMd = false;
+    mockModules.mockLoadProjectContextFiles.mockReturnValue([{ path: "AGENTS.md", content: "project instructions" }]);
+
+    await runAgent(fakeCtx(), "test-agent", "do something", { pi: fakePi });
+
+    expect(promptExtras()?.contextFiles).toEqual([{ path: "AGENTS.md", content: "project instructions" }]);
+  });
+
+  it("leaves contextFiles unset when there is no SUBAGENTS.md and AGENTS.md is off", async () => {
+    mockModules.mockIncludeContextFiles = false;
+    fs.rmSync(path.join(agentDir, "SUBAGENTS.md"));
+
+    await runAgent(fakeCtx(), "test-agent", "do something", { pi: fakePi });
+
+    expect(promptExtras()).not.toHaveProperty("contextFiles");
+  });
+});
+
 describe("runAgent — project trust threading", () => {
   beforeEach(() => {
     resetMocks();

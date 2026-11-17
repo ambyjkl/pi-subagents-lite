@@ -80,6 +80,7 @@ const hoisted = vi.hoisted(() => ({
     getModelThinkingLevel: vi.fn(() => undefined),
   })),
   mockIncludeContextFiles: true as boolean,
+  mockIncludeSubagentsMd: true as boolean,
   mockSystemPromptMode: "replace" as string,
   mockLoadToolsImplicitly: true as boolean,
   getLoaderOpts: () => _loaderOpts[_loaderOpts.length - 1] ?? null,
@@ -113,6 +114,12 @@ export const mockModules = {
   },
   set mockIncludeContextFiles(v: boolean) {
     hoisted.mockIncludeContextFiles = v;
+  },
+  get mockIncludeSubagentsMd() {
+    return hoisted.mockIncludeSubagentsMd;
+  },
+  set mockIncludeSubagentsMd(v: boolean) {
+    hoisted.mockIncludeSubagentsMd = v;
   },
   get mockSystemPromptMode() {
     return hoisted.mockSystemPromptMode;
@@ -169,6 +176,7 @@ vi.mock("../../src/shell.js", () => ({
   getStore: () => ({
     agent: {
       includeContextFiles: mockModules.mockIncludeContextFiles,
+      includeSubagentsMd: mockModules.mockIncludeSubagentsMd,
       systemPromptMode: mockModules.mockSystemPromptMode,
       graceTurns: 6,
       forceBackground: false,
@@ -226,6 +234,7 @@ export function resetMocks() {
   mockModules.clearLoaderOpts();
   mockModules.clearLoaderExtensions();
   mockModules.mockIncludeContextFiles = true;
+  mockModules.mockIncludeSubagentsMd = true;
   mockModules.mockSystemPromptMode = "replace";
   mockModules.mockLoadProjectContextFiles.mockReturnValue([]);
 

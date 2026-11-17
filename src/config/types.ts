@@ -26,6 +26,7 @@ export const CONFIG_AGENT_NON_MODEL_KEYS = [
   "widgetNavHint",
   "systemPromptMode",
   "includeContextFiles",
+  "includeSubagentsMd",
   "defaultThinking",
   "defaultMaxTurns",
   "loadSkillsImplicitly",

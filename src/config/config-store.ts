@@ -93,6 +93,8 @@ export interface ResolvedAgentSettings {
   readonly systemPromptMode: SystemPromptMode;
   /** Whether to include AGENTS.md context files in the subagent system prompt. */
   readonly includeContextFiles: boolean;
+  /** Whether to include the SUBAGENTS.md files (subagent-only context) in the subagent system prompt. */
+  readonly includeSubagentsMd: boolean;
   /** Default thinking level for spawned agents. Undefined = inherit from agent config. */
   readonly defaultThinking: ThinkingChoice | undefined;
   /** Default max turns for spawned agents. Undefined = unlimited. */
@@ -222,6 +224,7 @@ export class ConfigStore {
         ? (a.systemPromptMode as SystemPromptMode)
         : "replace",
       includeContextFiles: a.includeContextFiles ?? true,
+      includeSubagentsMd: a.includeSubagentsMd ?? true,
       defaultThinking: a.defaultThinking as ThinkingChoice | undefined,
       defaultMaxTurns: a.defaultMaxTurns,
       loadSkillsImplicitly: a.loadSkillsImplicitly !== false,
@@ -395,6 +398,7 @@ export class ConfigStore {
       setOutputTranscript: (enabled: boolean) => this.setAgentLayerEntry("outputTranscript", enabled, "global"),
       setSystemPromptMode: (mode: SystemPromptMode) => this.setAgentLayerEntry("systemPromptMode", mode, "global"),
       setIncludeContextFiles: (enabled: boolean) => this.setAgentLayerEntry("includeContextFiles", enabled, "global"),
+      setIncludeSubagentsMd: (enabled: boolean) => this.setAgentLayerEntry("includeSubagentsMd", enabled, "global"),
       setDefaultThinking: (level: ThinkingChoice | undefined, target: "global" | "project" = "global"): void => {
         this.setAgentLayerEntry("defaultThinking", level, target);
       },

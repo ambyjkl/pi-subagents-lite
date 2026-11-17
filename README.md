@@ -219,6 +219,10 @@ A project can commit its own defaults as `.pi/subagents-lite.json` (same file na
 
 When `includeContextFiles` is `true` (default), AGENTS.md files load as shared context before agent instructions, which improves KV cache prefix hits.
 
+#### Subagent-only context
+
+`~/.pi/agent/SUBAGENTS.md` and `<cwd>/.pi/SUBAGENTS.md` are read by subagents only, never by the main agent. They load as further `<project_instructions>` entries right after the AGENTS.md files, in that order (global, then project). They are controlled by their own `includeSubagentsMd` setting (default on; `/agents` → System prompt → "Include SUBAGENTS.md"), not by `includeContextFiles`, and apply in every system prompt mode. Only `<cwd>/.pi/` is checked, with no ancestor walk, so a worktree uses its own checked-out copy and a file is never loaded twice. An untrusted cross-repo target skips the project file but still gets the global one. Empty files are ignored.
+
 ### Watchdog
 
 The watchdog stops agents that hang. Two independent checks, both default 45 minutes, `0` disables:

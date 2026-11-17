@@ -65,6 +65,7 @@ export const DEFAULT_AGENT: SubagentsConfig["agent"] = {
   widgetNavHint: true,
   systemPromptMode: "replace",
   includeContextFiles: true,
+  includeSubagentsMd: true,
   disableDefaultAgents: false,
   agentToolStrictMode: false,
   exposeDescriptions: false,

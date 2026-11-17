@@ -726,6 +726,7 @@ describe("ConfigStore agent properties", () => {
   it("boolean properties default correctly", () => {
     const store = new ConfigStore(minimalIO());
     expect(store.agent.includeContextFiles).toBe(true);
+    expect(store.agent.includeSubagentsMd).toBe(true);
     expect(store.agent.loadSkillsImplicitly).toBe(true);
     expect(store.agent.loadExtensionsImplicitly).toBe(true);
     expect(store.agent.loadToolsImplicitly).toBe(true);
@@ -750,6 +751,7 @@ describe("ConfigStore agent properties", () => {
           default: null,
           forceBackground: false,
           includeContextFiles: false,
+          includeSubagentsMd: false,
           systemPromptMode: "custom",
           defaultThinking: "high",
           defaultMaxTurns: 50,
@@ -763,6 +765,7 @@ describe("ConfigStore agent properties", () => {
     });
     const store = new ConfigStore(io);
     expect(store.agent.includeContextFiles).toBe(false);
+    expect(store.agent.includeSubagentsMd).toBe(false);
     expect(store.agent.systemPromptMode).toBe("custom");
     expect(store.agent.defaultThinking).toBe("high");
     expect(store.agent.defaultMaxTurns).toBe(50);
@@ -778,6 +781,7 @@ describe("ConfigStore agent properties", () => {
     const store = new ConfigStore(io);
 
     store.mutate.agent.setIncludeContextFiles(false);
+    store.mutate.agent.setIncludeSubagentsMd(false);
     store.mutate.agent.setSystemPromptMode("custom");
     store.mutate.agent.setDefaultThinking("medium");
     store.mutate.agent.setDefaultMaxTurns(30);
@@ -787,6 +791,7 @@ describe("ConfigStore agent properties", () => {
     store.mutate.agent.setDisableDefaultAgents(true);
 
     expect(store.agent.includeContextFiles).toBe(false);
+    expect(store.agent.includeSubagentsMd).toBe(false);
     expect(store.agent.systemPromptMode).toBe("custom");
     expect(store.agent.defaultThinking).toBe("medium");
     expect(store.agent.defaultMaxTurns).toBe(30);
@@ -794,7 +799,7 @@ describe("ConfigStore agent properties", () => {
     expect(store.agent.loadExtensionsImplicitly).toBe(false);
     expect(store.agent.loadToolsImplicitly).toBe(false);
     expect(store.agent.disableDefaultAgents).toBe(true);
-    expect(saves).toHaveLength(8);
+    expect(saves).toHaveLength(9);
   });
 
   it("setDefaultThinking/MaxTurns(undefined) removes the field", () => {
@@ -817,6 +822,7 @@ describe("ConfigStore agent properties", () => {
           default: "keep",
           forceBackground: true,
           includeContextFiles: false,
+          includeSubagentsMd: false,
           systemPromptMode: "custom",
           defaultThinking: "low",
           defaultMaxTurns: 25,
@@ -833,6 +839,7 @@ describe("ConfigStore agent properties", () => {
     store.mutate.agent.clearAllModelOverrides();
     const snap = store.agentConfigSnapshot();
     expect(snap.includeContextFiles).toBe(false);
+    expect(snap.includeSubagentsMd).toBe(false);
     expect(snap.systemPromptMode).toBe("custom");
     // The model family is part of the cleared set now.
     expect(snap.defaultThinking).toBeUndefined();

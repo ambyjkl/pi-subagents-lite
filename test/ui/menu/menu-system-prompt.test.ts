@@ -97,10 +97,24 @@ describe("showSystemPromptMenu", () => {
     const ids = settingsListCalls[0].items.map((i) => i.id);
     expect(ids).toContain("systemPromptMode");
     expect(ids).toContain("includeContextFiles");
+    expect(ids).toContain("includeSubagentsMd");
     expect(ids).toContain("loadSkillsImplicitly");
     expect(ids).toContain("loadExtensionsImplicitly");
     expect(ids).toContain("loadToolsImplicitly");
     expect(ids).not.toContain("agentToolStrictMode");
+  });
+
+  it("shows Include SUBAGENTS.md ON by default and switches it off", async () => {
+    const ctx = createMockCtx();
+    const { showSystemPromptMenu } = await import("../../../src/ui/menu/menu-system-prompt.js");
+    await showSystemPromptMenu(ctx);
+    const item = settingsListCalls[0].items.find((i) => i.id === "includeSubagentsMd");
+    expect(item).toMatchObject({ label: "Include SUBAGENTS.md", currentValue: "ON" });
+
+    settingsListCalls[0].onChange("includeSubagentsMd", "OFF");
+
+    expect(mockModules.mockConfig.agent.includeSubagentsMd).toBe(false);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Include SUBAGENTS.md set to OFF", "info");
   });
 
   it("includes createPromptFile when mode is custom and file does not exist", async () => {

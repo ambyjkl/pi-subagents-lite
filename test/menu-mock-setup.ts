@@ -283,6 +283,7 @@ vi.mock("../src/shell.js", async () => {
         widgetDescLengthCompact: a.widgetDescLengthCompact ?? DEFAULT_AGENT.widgetDescLengthCompact,
         systemPromptMode: a.systemPromptMode ?? DEFAULT_AGENT.systemPromptMode,
         includeContextFiles: a.includeContextFiles ?? DEFAULT_AGENT.includeContextFiles,
+        includeSubagentsMd: a.includeSubagentsMd ?? DEFAULT_AGENT.includeSubagentsMd,
         defaultThinking: a.defaultThinking,
         defaultMaxTurns: a.defaultMaxTurns,
         loadSkillsImplicitly: a.loadSkillsImplicitly !== false,
@@ -448,6 +449,9 @@ vi.mock("../src/shell.js", async () => {
         },
         setIncludeContextFiles(enabled: boolean) {
           mockModules.mockConfig.agent.includeContextFiles = enabled;
+        },
+        setIncludeSubagentsMd(enabled: boolean) {
+          mockModules.mockConfig.agent.includeSubagentsMd = enabled;
         },
         setDefaultThinking(level: ThinkingChoice | undefined, target: "global" | "project" = "global") {
           const agent = target === "project" ? mockModules.mockProjectConfig.agent : mockModules.mockConfig.agent;

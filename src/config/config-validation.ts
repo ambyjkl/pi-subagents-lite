@@ -78,6 +78,7 @@ const AGENT_KEY_SPECS: Record<string, KeySpec> = {
   widgetNavHint: BOOL,
   systemPromptMode: SYSTEM_PROMPT_MODE,
   includeContextFiles: BOOL,
+  includeSubagentsMd: BOOL,
   defaultThinking: THINKING,
   defaultMaxTurns: NUM,
   loadSkillsImplicitly: BOOL,

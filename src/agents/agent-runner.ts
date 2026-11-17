@@ -26,6 +26,7 @@ import { findModelInRegistry, GIT_EXEC_TIMEOUT_MS } from "../utils.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { buildAgentPrompt, type PromptExtras } from "../prompt/prompts.ts";
 import { preloadSkills, loadSkillMeta } from "../prompt/skill-loader.ts";
+import { loadSubagentsMdFiles } from "../prompt/subagents-md.ts";
 import { type EnvInfo, type RunCallbacks, type RunTunables, SHORT_ID_LENGTH } from "../types.ts";
 import type { SubagentType, SystemPromptMode } from "./types.ts";
 import { getManager, getStore } from "../shell.ts";
@@ -336,6 +337,7 @@ function resolveSystemPromptSources(
   cwd: string,
   notify: (msg: string) => void,
   agentConfig: ReturnType<typeof getAgentConfig>,
+  projectTrusted = true,
 ): {
   mode: SystemPromptMode;
   extras: Pick<PromptExtras, "parentSystemPrompt" | "customSystemPrompt" | "contextFiles">;
@@ -377,6 +379,12 @@ function resolveSystemPromptSources(
     } catch {
       // Non-fatal: context files are supplementary
     }
+  }
+
+  // SUBAGENTS.md has its own switch, independent of the AGENTS.md one.
+  if (store.agent.includeSubagentsMd) {
+    const subagentsMd = loadSubagentsMdFiles({ cwd, agentDir: getAgentDir(), projectTrusted });
+    if (subagentsMd.length > 0) extras.contextFiles = [...(extras.contextFiles ?? []), ...subagentsMd];
   }
 
   return { mode, extras };
@@ -828,7 +836,13 @@ export async function createChildSession(
       };
       throwIfAborted("before resource load");
 
-      const { mode, extras: promptExtras } = resolveSystemPromptSources(ctx, effectiveCwd, bufferNotify, agentConfig);
+      const { mode, extras: promptExtras } = resolveSystemPromptSources(
+        ctx,
+        effectiveCwd,
+        bufferNotify,
+        agentConfig,
+        options.projectTrusted !== false,
+      );
 
       const systemPrompt = buildPrompt(type, agentConfig, config, effectiveCwd, env, mode, promptExtras);
       const { loader, reloadAndMap } = createResourceLoader(

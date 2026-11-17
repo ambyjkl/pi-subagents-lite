@@ -51,6 +51,13 @@ export async function showSystemPromptMenu(ctx: ExtensionCommandContext): Promis
         description: "Load project and ~/.pi/agent AGENTS.md as shared <project_context>.",
       },
       {
+        id: "includeSubagentsMd",
+        label: "Include SUBAGENTS.md",
+        currentValue: store.agent.includeSubagentsMd ? "ON" : "OFF",
+        values: ["ON", "OFF"],
+        description: "Load .pi/SUBAGENTS.md and ~/.pi/agent/SUBAGENTS.md into subagents only, never the main agent.",
+      },
+      {
         id: "loadSkillsImplicitly",
         label: "Load skills implicitly",
         currentValue: store.agent.loadSkillsImplicitly ? "ON" : "OFF",
@@ -105,6 +112,10 @@ export async function showSystemPromptMenu(ctx: ExtensionCommandContext): Promis
       case "includeContextFiles":
         store.mutate.agent.setIncludeContextFiles(newValue === "ON");
         ctx.ui.notify(`Include AGENTS.md set to ${newValue}`, "info");
+        break;
+      case "includeSubagentsMd":
+        store.mutate.agent.setIncludeSubagentsMd(newValue === "ON");
+        ctx.ui.notify(`Include SUBAGENTS.md set to ${newValue}`, "info");
         break;
       case "loadSkillsImplicitly":
         store.mutate.agent.setLoadSkillsImplicitly(newValue === "ON");

@@ -37,6 +37,8 @@ export interface SubagentsConfig {
     systemPromptMode?: SystemPromptMode;
     /** Whether to include AGENTS.md context files in the subagent system prompt. Default: true. */
     includeContextFiles?: boolean;
+    /** Whether to include ~/.pi/agent/SUBAGENTS.md and <cwd>/.pi/SUBAGENTS.md in the subagent system prompt. Default: true. */
+    includeSubagentsMd?: boolean;
     /** Default thinking level for spawned agents. Undefined = inherit from agent config; `parent` follows the parent session. */
     defaultThinking?: ThinkingChoice;
     /** Default max turns for spawned agents. Undefined = unlimited. */
